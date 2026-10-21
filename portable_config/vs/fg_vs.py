@@ -70,12 +70,19 @@ def backend(engines):
     import vsmlrt
     # ponytail: one dynamic-shape engine per model covers every resolution up to 4K;
     # static per-resolution engines are a bit faster if the 4050 needs the headroom.
-    return vsmlrt.Backend.TRT(fp16=True, static_shape=False, min_shapes=(64, 64),
+    return vsmlrt.Backend.TRT(fp16=True, static_shape=False, min_shapes=(128, 128),
                               opt_shapes=(1920, 1088), max_shapes=(3840, 2176),
                               engine_folder=engines)
 
 
+# Installed layout: <app>/portable_config/vs/fg_vs.py and <app>/vs-runtime/vs-plugins/vstrt.dll
+PLUGINS = os.environ.get("FRAMEGEN_VS_PLUGINS", os.path.join(HERE, "..", "..", "vs-runtime", "vs-plugins"))
+
+
 def rife(rgb, mult, level, engines):
+    import vapoursynth as vs
+    if not hasattr(vs.core, "trt"):
+        vs.core.std.LoadPlugin(os.path.join(PLUGINS, "vstrt.dll"))
     import vsmlrt
     step = LADDER[level - 1]
     return vsmlrt.RIFE(rgb, multi=mult, scale=step["scale"], model=vsmlrt.RIFEModel(step["model"]),
