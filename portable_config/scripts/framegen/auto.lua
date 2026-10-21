@@ -32,6 +32,9 @@ local function changed(st, now)
     st.warm_until, st.good_since, st.bad, st.prev = now + M.WARMUP, now + M.WARMUP, 0, nil
 end
 
+-- After a seek the filter reloads; give it a fresh warm-up without changing level.
+M.rewarm = changed
+
 function M.new(levels, now)
     local st = { levels = levels, level = 1, blocked = {} }
     changed(st, now)
