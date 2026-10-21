@@ -48,7 +48,7 @@ function M.new(levels, now, start)
     return st
 end
 
-M.HEADROOM = 1.2  -- calibrated speed must beat the need by 20% (real video, decoding, other apps)
+M.HEADROOM = 1.5  -- measured: the real pipeline (decode, mpv render, display) needs ~1.4x the bench speed; 1.2 was not enough at 72 fps
 
 local function gcd(a, b)
     while b ~= 0 do a, b = b, a % b end

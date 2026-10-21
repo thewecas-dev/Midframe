@@ -152,7 +152,7 @@ RIFE 4.6 half ≈ 105, quarter ≈ 121. Real-time 1080p needs ≥ 48. Changes ma
   dynamic engine: faster inference and quicker reload after each seek. 1080p engines are built and
   measured at first launch; other sizes on first use (one level, a few minutes, original fps meanwhile).
 - **Calibrated start level:** each video starts at the best level whose measured speed covers the needed
-  frames with 20% headroom; levels known to be too slow are never tried, so there is no step-down cycle.
+  frames with 50% headroom; levels known to be too slow are never tried, so there is no step-down cycle.
 - **Ladder:** RIFE 4.26 (v2 network) → RIFE 4.6 → RIFE 4.6 half → RIFE 4.6 quarter. RIFE 4.25 lite was
   dropped (measured slower than 4.26).
 - **Before-playback prompts:** quality (YouTube) and frame rate, via uosc menus inside mpv's load hooks;
