@@ -117,8 +117,11 @@ local function prepare()
             apply()
         else
             local err = ((res and res.stderr or ""):match("([^\n]*%S)%s*$") or "unknown error"):gsub("%s+$", "")
-            msg.error("engine build failed: " .. ((res and res.stderr) or ""))
-            notice("RIFE setup failed: " .. err, 8, "bad")
+            local full = (res and ((res.stdout or "") .. (res.stderr or ""))) or ""
+            msg.error("engine build failed: " .. full)
+            local f = io.open(ENGINES .. "/build-error.log", "w")
+            if f then f:write(full); f:close() end
+            notice("RIFE setup failed (details: portable_config\\engines\\build-error.log): " .. err, 10, "bad")
         end
     end)
 end
