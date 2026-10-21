@@ -1,7 +1,12 @@
 -- Auto performance mode: step down when playback can't keep up, carefully step back up.
 local M = {}
 
-M.WARMUP, M.BAD_TICKS, M.STABLE_UP, M.FAIL_WINDOW = 3, 3, 30, 10
+-- WARMUP covers the filter reload (TensorRT engine load) after any level change or seek, which
+-- otherwise looks like slowness and makes auto mode step down for nothing.
+M.WARMUP, M.BAD_TICKS, M.STABLE_UP = 8, 3, 30
+-- A level that fails this soon after stepping up to it gets blocked; must exceed WARMUP + BAD_TICKS.
+M.FAIL_WINDOW = M.WARMUP + M.BAD_TICKS + 4
+M.DROP_TOL = 2  -- dropped frames per second tolerated before a tick counts as bad
 
 -- Target fps fallbacks, highest first: target, 60, 2x source (each only if below target).
 function M.fps_steps(tn, td, sn, sd)
@@ -47,7 +52,7 @@ function M.tick(st, s, now)
     st.prev = s
     if not prev then return nil end
 
-    local bad = s.drops - prev.drops > 0 or s.delayed - prev.delayed > 2
+    local bad = s.drops - prev.drops > M.DROP_TOL or s.delayed - prev.delayed > 2
         or (s.vf_fps ~= nil and s.vf_fps < 0.95 * s.target)
     if bad then
         st.bad, st.good_since = st.bad + 1, now

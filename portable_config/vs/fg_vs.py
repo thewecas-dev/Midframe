@@ -79,8 +79,10 @@ def backend(engines):
     import vsmlrt
     # ponytail: one dynamic-shape engine per model covers every resolution up to 4K;
     # static per-resolution engines are a bit faster if the 4050 needs the headroom.
+    # num_streams=2 lets the GPU work on two frames at once (doesn't change the engine files).
     return vsmlrt.Backend.TRT(fp16=True, static_shape=False, min_shapes=MIN_SHAPE,
-                              opt_shapes=OPT_SHAPE, max_shapes=MAX_SHAPE, engine_folder=engines)
+                              opt_shapes=OPT_SHAPE, max_shapes=MAX_SHAPE, engine_folder=engines,
+                              num_streams=2)
 
 
 # Installed layout: <app>/portable_config/vs/fg_vs.py and <app>/vs-runtime/vs-plugins/vstrt.dll

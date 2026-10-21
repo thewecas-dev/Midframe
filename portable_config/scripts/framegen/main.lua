@@ -140,7 +140,7 @@ apply = function()
     })
     S.added = true
     mp.commandv("vf", "add", "@framegen:vapoursynth=file=" .. quoted(VPY) ..
-        ":buffered-frames=8:concurrent-frames=4:user-data=" .. quoted(json))
+        ":buffered-frames=8:concurrent-frames=8:user-data=" .. quoted(json))
     sync_ui()
 end
 
