@@ -504,6 +504,7 @@ local function draw()
     local w, h = video_size()
     local t, lv = target()
     ov.data = overlay.render({
+        res_w = ov.res_x,
         src_res = w and size_label(w, h),
         src_fps = S.src_num and S.src_num / S.src_den,
         target_fps = t,

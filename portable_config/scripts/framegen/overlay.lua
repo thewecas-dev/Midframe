@@ -50,17 +50,18 @@ function M.render(st)
     }
     local top = 8 + #rows * 18 + 6
     local height = top + #GRAPHS * (GH + 16)
+    local X = (st.res_w or W) - W  -- panel sits in the top-right corner
     local ev = {
-        string.format("{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H60&\\p1}%s{\\p0}", M.rrect(4, 4, W - 4, height - 4, 10)),
-        "{\\an7\\pos(14,10)\\fs14\\bord0\\shad0\\1c&HF7F4F2&\\fnConsolas}" .. table.concat(rows, "\\N"),
+        string.format("{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H60&\\p1}%s{\\p0}", M.rrect(X + 4, 4, W - 8, height - 4, 10)),
+        string.format("{\\an7\\pos(%d,10)\\fs14\\bord0\\shad0\\1c&HF7F4F2&\\fnConsolas}", X + 14) .. table.concat(rows, "\\N"),
     }
     for i, g in ipairs(GRAPHS) do
         local y = top + (i - 1) * (GH + 16)
         local samples = h[g.key] or {}
         local vmax = g.key == "real_fps" and (st.target_fps or 60) * 1.2 or maxof(samples, 1) * 1.1
-        ev[#ev + 1] = string.format("{\\an7\\pos(10,%d)\\fs11\\bord0\\shad0\\1c&HCCCCCC&}%s (max %s)", y, g.label,
+        ev[#ev + 1] = string.format("{\\an7\\pos(%d,%d)\\fs11\\bord0\\shad0\\1c&HCCCCCC&}%s (max %s)", X + 10, y, g.label,
             num(maxof(samples, 0)))
-        local path = M.graph(samples, 10, y + 13, W - 20, GH, vmax)
+        local path = M.graph(samples, X + 10, y + 13, W - 20, GH, vmax)
         if path ~= "" then
             ev[#ev + 1] = string.format("{\\an7\\pos(0,0)\\bord0\\shad0\\1c%s\\1a&H40&\\p1}%s{\\p0}", g.color, path)
         end
