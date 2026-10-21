@@ -50,8 +50,16 @@ $mlrt = "$gh/AmusementClub/vs-mlrt/releases/download/$MLRT_TAG"
 $part1 = Get-File "$mlrt/vsmlrt-windows-x64-tensorrt.$MLRT_TAG.7z.001"
 Get-File "$mlrt/vsmlrt-windows-x64-tensorrt.$MLRT_TAG.7z.002" | Out-Null
 Expand-7z $part1 $plugins
-$models = Get-File "$mlrt/models.$MLRT_TAG.7z"
-Expand-7z $models $plugins ($RIFE_MODELS | ForEach-Object { "-ir!$_" })
+# RIFE models ship separately; each archive holds rife/<model>.onnx (v4.6 lives in the older rife_v8 bundle)
+$ext = "$gh/AmusementClub/vs-mlrt/releases/download"
+$modelArchives = @{
+    "rife_v4.26.onnx"      = "$ext/external-models/rife_v4.26.7z"
+    "rife_v4.25_lite.onnx" = "$ext/external-models/rife_v4.25_lite.7z"
+    "rife_v4.6.onnx"       = "$ext/model-20220923/rife_v8.7z"
+}
+foreach ($m in $RIFE_MODELS) {
+    Expand-7z (Get-File $modelArchives[$m]) "$plugins\models" @("rife\$m")
+}
 foreach ($m in $RIFE_MODELS) {
     if (-not (Test-Path "$plugins\models\rife\$m")) { throw "missing RIFE model $m (archive layout changed?)" }
 }
