@@ -97,8 +97,9 @@ def pad_amount(width, height):
 
 def rife(rgb, mult, level, engines):
     import vapoursynth as vs
-    if not hasattr(vs.core, "trt"):
-        vs.core.std.LoadPlugin(os.path.join(PLUGINS, "vstrt.dll"))
+    dll = os.path.join(PLUGINS, "vstrt.dll")
+    if not hasattr(vs.core, "trt") and os.path.exists(dll):
+        vs.core.std.LoadPlugin(dll)
     import vsmlrt
     step = LADDER[level - 1]
     pw, ph = pad_amount(rgb.width, rgb.height)
@@ -123,6 +124,8 @@ def build(video_in, container_fps, params):
     # Matrix only: transfer stays as-is (PQ/HLG for HDR) so mpv still tone-maps the output.
     rgb = core.resize.Bicubic(clip, format=vs.RGBH, matrix_in_s=params["matrix"], range_in_s=params["range"])
     interp = rife(rgb, mult, params["level"], params["engines"])
+    # RIFE may return a different float format (e.g. RGBS for RGBH in); held frames must match it.
+    src = rgb if interp.format.id == rgb.format.id else core.resize.Point(rgb, format=interp.format.id)
 
     # Tiny luma clip; PlaneStatsDiff(n, n+1) drives both scene-cut and duplicate-drawing detection.
     small = core.resize.Bilinear(clip, max(clip.width // 8 // 2 * 2, 16), max(clip.height // 8 // 2 * 2, 16),
@@ -136,9 +139,9 @@ def build(video_in, container_fps, params):
     def select(n, f):
         k, frac = source_pos(n, mult)
         if should_hold(frac, f.props.get("PlaneStatsDiff", 0.05), anime):
-            return rgb[k]  # held frames never touch the GPU: VapourSynth is lazy
+            return src[k]  # held frames never touch the GPU: VapourSynth is lazy
         return interp
 
-    picked = core.std.FrameEval(core.std.BlankClip(rgb, length=out_len, keep=True), select, prop_src=det_out)
+    picked = core.std.FrameEval(core.std.BlankClip(interp, length=out_len, keep=True), select, prop_src=det_out)
     out = core.resize.Bicubic(picked, format=vs.YUV420P10, matrix_s=params["matrix"], range_s=params["range"])
     return core.std.AssumeFPS(out, fpsnum=dst_fps.numerator, fpsden=dst_fps.denominator)

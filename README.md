@@ -26,7 +26,7 @@ Design: `docs/specs/2026-10-21-framegen-design.md` · Plan: `docs/plans/2026-10-
 
 ## Tests (any OS)
 
-`tests/run.sh` needs `lua` and `python3`. It covers the fps math, auto step-down, overlay, mpv wiring (with a stub mpv) and the frame-hold logic.
+`tests/run.sh` needs `lua` and `python3` (set `VS_PYTHON` to a Python with VapourSynth to also run the filter test). It covers the fps math, auto step-down, overlay, mpv wiring (with a stub mpv) and the frame-hold logic.
 The GPU path can only be tested on Windows, using the checklist below.
 
 ## Windows acceptance checklist (RTX 4050, plugged in)
