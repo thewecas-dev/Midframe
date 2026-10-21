@@ -48,6 +48,13 @@ def test_pad_amount():
     assert 1080 + 72 <= 2176 and 2160 + 16 <= 2176  # padded 4K still fits the engine's max shape
 
 
+def test_shape_profile_fits_padding():
+    for w, h in (fg_vs.MIN_SHAPE, fg_vs.OPT_SHAPE, fg_vs.MAX_SHAPE):
+        assert w % fg_vs.PAD == 0 and h % fg_vs.PAD == 0, (w, h)
+    pw, ph = fg_vs.pad_amount(1920, 1080)
+    assert (1920 + pw, 1080 + ph) == fg_vs.OPT_SHAPE
+
+
 def test_parse_params():
     good = {"num": 60000, "den": 1001, "level": 1, "anime": True, "engines": "C:/e",
             "matrix": "709", "range": "limited"}

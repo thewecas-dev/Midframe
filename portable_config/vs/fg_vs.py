@@ -66,13 +66,19 @@ def parse_params(user_data):
     return p
 
 
+# TensorRT shape profile (w, h). Every value must be a multiple of PAD: some RIFE models
+# (e.g. 4.25 lite) reject shapes that aren't, even for the "typical size" hint.
+MIN_SHAPE = (128, 128)
+OPT_SHAPE = (1920, 1152)   # padded 1080p
+MAX_SHAPE = (3840, 2176)   # padded 4K
+
+
 def backend(engines):
     import vsmlrt
     # ponytail: one dynamic-shape engine per model covers every resolution up to 4K;
     # static per-resolution engines are a bit faster if the 4050 needs the headroom.
-    return vsmlrt.Backend.TRT(fp16=True, static_shape=False, min_shapes=(128, 128),
-                              opt_shapes=(1920, 1088), max_shapes=(3840, 2176),
-                              engine_folder=engines)
+    return vsmlrt.Backend.TRT(fp16=True, static_shape=False, min_shapes=MIN_SHAPE,
+                              opt_shapes=OPT_SHAPE, max_shapes=MAX_SHAPE, engine_folder=engines)
 
 
 # Installed layout: <app>/portable_config/vs/fg_vs.py and <app>/vs-runtime/vs-plugins/vstrt.dll
