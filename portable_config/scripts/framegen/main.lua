@@ -136,8 +136,8 @@ local function sync_ui()
         status = size_label(w, h) .. " · " .. src .. " fps"
         if t then
             status = status .. " → " .. fps.fmt(t) .. " fps · " .. LADDER[lv.rife].label
-        elseif S.building and S.building.level then
-            status = status .. " · preparing " .. LADDER[S.building.level].label .. "…"
+        elseif S.building then
+            status = status .. " · preparing " .. (S.building.level and LADDER[S.building.level].label or "RIFE") .. "…"
         else
             status = status .. " · interpolation off"
         end
@@ -145,7 +145,7 @@ local function sync_ui()
     mp.set_property_native("user-data/framegen/status", status)
 end
 
-local apply, draw_idle
+local apply, draw_idle, retarget
 
 -- Engine builds run one at a time in a subprocess (minutes each); playback stays plain meanwhile.
 local function start_build(job)
@@ -167,12 +167,7 @@ local function start_build(job)
         S.building = nil
         local full = (res and ((res.stdout or "") .. (res.stderr or ""))) or ""
         if ok and res.status == 0 then
-            if job.level then
-                local w, h = video_size()
-                if w == job.w and h == job.h then apply() end
-            else
-                notice("RIFE ready", 3, "good")
-            end
+            if not job.level then notice("RIFE ready", 3, "good") end
         else
             local err = (full:match("([^\n]*%S)%s*$") or "unknown error"):gsub("%s+$", "")
             msg.error("engine build failed: " .. full)
@@ -181,9 +176,9 @@ local function start_build(job)
             notice("RIFE setup failed (details: portable_config\\engines\\build-error.log): " .. err, 10, "bad")
         end
         draw_idle()
-        sync_ui()
         local nxt = table.remove(S.builds, 1)
-        if nxt then start_build(nxt) end
+        if nxt then start_build(nxt) else retarget() end  -- GPU free again: plan from the new calibration
+        sync_ui()
     end)
 end
 
@@ -194,6 +189,10 @@ end
 apply = function()
     local lv = current()
     if not (S.enabled and lv and not lv.off) then
+        remove()
+        return sync_ui()
+    end
+    if S.building then  -- a build owns the GPU: playing alongside it only stutters and trips auto mode
         remove()
         return sync_ui()
     end
@@ -217,7 +216,7 @@ apply = function()
     sync_ui()
 end
 
-local function retarget()
+retarget = function()
     if not S.src_num then return end
     local tn, td, err = fps.resolve(S.choice, S.src_num, S.src_den, fps.cap(mp.get_property_number("display-fps")))
     if not tn then
@@ -469,6 +468,7 @@ mp.add_hook("on_load", 5, function(hook)
     open_prompt({ title = "Video quality", items = items, footnote = "Picks the closest available stream" },
         function()
             mp.set_property("file-local-options/ytdl-format", ytdl_format(S.quality))
+            msg.info("quality " .. S.quality .. " -> ytdl-format " .. ytdl_format(S.quality))
             hook:cont()
         end)
 end)

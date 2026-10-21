@@ -42,7 +42,8 @@ to be too slow. Ladder (best quality first): RIFE 4.26 → RIFE 4.6 → RIFE 4.6
 It covers the fps math, auto step-down, overlay, mpv wiring with prompts and build queue (against a stub mpv),
 the frame-hold logic and the filter graph itself (with a stand-in for the GPU part of RIFE).
 The GPU path can only be tested on Windows: `vs-runtime\python.exe portable_config\vs\bench.py [w h]`
-prints raw RIFE and full-filter speed per level and records the calibration.
+prints raw RIFE and full-filter speed per level and records the calibration. Run it only while FrameGen is
+closed or idle with "RIFE ready" shown: two engine builds on one GPU slow each other down badly.
 
 ## Windows acceptance checklist (RTX 4050, plugged in)
 

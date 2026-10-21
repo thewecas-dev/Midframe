@@ -177,6 +177,16 @@ E.props["idle-active"] = true; E.props["osd-dimensions"] = { w = 1440, h = 810 }
 E.observers["idle-active"]()
 assert(last_osd(E):find("Preparing RIFE", 1, true), "idle screen shows building")
 
+-- test_no_interpolation_while_building: calibration written by bench.py mid-build must not start the
+-- filter while the build still owns the GPU; when the build ends, the video is re-planned.
+write(ENGINES .. "/cal_1920x1080.json", json({ w = 1920, h = 1080, levels = FULL }))
+E.messages["set-fps"]("60")
+eq(last_vf(E), nil, "no filter while the reference build runs")
+assert(E.set["user-data/framegen/status"]:find("preparing RIFE", 1, true), E.set["user-data/framegen/status"])
+E.async[1].cb(true, { status = 0 })
+assert(last_vf(E) and last_vf(E):find('"num":60,'), "interpolation starts once the build is done")
+assert(last_osd(E):find("RIFE ready", 1, true), last_osd(E))
+
 -- test_apply_quotes_user_data
 E = make_env({ cal = { ["1920x1080"] = FULL } })
 eq(#E.async, 0, "calibrated: nothing to build")
