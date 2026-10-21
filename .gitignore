@@ -1,0 +1,5 @@
+dist/
+build/
+*.engine
+__pycache__/
+.DS_Store
