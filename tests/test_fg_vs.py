@@ -32,9 +32,9 @@ def test_should_hold():
 def test_source_fps_fallback():
     assert fg_vs.source_fps(23.976) == F(24000, 1001)
     assert fg_vs.source_fps(25.0) == F(25)
-    assert fg_vs.source_fps(0) == F(30000, 1001)
-    assert fg_vs.source_fps(math.nan) == F(30000, 1001)
-    assert fg_vs.source_fps(None) == F(30000, 1001)
+    assert fg_vs.source_fps(0) is None
+    assert fg_vs.source_fps(math.nan) is None
+    assert fg_vs.source_fps(None) is None
 
 
 def test_pad_amount():

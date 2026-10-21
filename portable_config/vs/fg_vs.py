@@ -19,12 +19,13 @@ RANGES = {"limited", "full"}
 
 
 def source_fps(container_fps):
+    """Snap mpv's float fps to an exact fraction; None when unknown (0/NaN, common at stream start)."""
     try:
         f = float(container_fps)
     except (TypeError, ValueError):
-        f = 0.0
+        return None
     if not math.isfinite(f) or f <= 0:
-        return Fraction(30000, 1001)
+        return None
     k = round(f)
     if abs(f - k) < 0.01:
         return Fraction(k)
@@ -115,6 +116,10 @@ def build(video_in, container_fps, params):
 
     src_fps = source_fps(container_fps)
     dst_fps = Fraction(params["num"], params["den"])
+    # Unknown source fps, or a target that isn't faster: play through untouched rather than guess.
+    # Guessing wrong would desync audio; mult 1 would make vsmlrt raise.
+    if src_fps is None or dst_fps <= src_fps:
+        return video_in
     mult = dst_fps / src_fps
     if int(mult) == mult:
         mult = int(mult)

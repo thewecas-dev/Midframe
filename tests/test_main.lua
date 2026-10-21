@@ -68,18 +68,18 @@ local function last_osd(E) return E.osd[#E.osd] or "" end
 local E = make_env({})
 E.props["container-fps"] = 23.976
 E.props["display-fps"] = 144
-E.observers["video-params"]("video-params", VP)
+E.props["video-params"] = VP; E.observers["video-params"]()
 for _, c in ipairs(E.cmds) do assert(not c:find("^vf add"), "no filter before engines exist: " .. c) end
 eq(#E.async, 1, "one engine build started at launch")
 assert(last_osd(E):find("Preparing RIFE", 1, true), last_osd(E))
-E.observers["video-params"]("video-params", VP)  -- same file again: no second build
+E.props["video-params"] = VP; E.observers["video-params"]()  -- same file again: no second build
 eq(#E.async, 1, "build not restarted")
 
 -- test_apply_quotes_user_data
 E = make_env({ ["portable_config/engines/READY"] = { is_file = true } })
 E.props["container-fps"] = 23.976
 E.props["display-fps"] = 144
-E.observers["video-params"]("video-params", VP)
+E.props["video-params"] = VP; E.observers["video-params"]()
 local vf = last_vf(E)
 assert(vf:find("^vf add @framegen:vapoursynth=file=%%%d+%%"), vf)
 local n, js = vf:match("user%-data=%%(%d+)%%(.*)$")
@@ -103,7 +103,8 @@ eq(#E.cmds, before, "no repeat after disable")
 -- test_hdr_matrix
 E = make_env({ ["portable_config/engines/READY"] = { is_file = true } })
 E.props["container-fps"] = 24
-E.observers["video-params"]("video-params", { w = 3840, h = 2160, colormatrix = "bt.2020-ncl", colorlevels = "limited" })
+E.props["video-params"] = { w = 3840, h = 2160, colormatrix = "bt.2020-ncl", colorlevels = "limited" }
+E.observers["video-params"]()
 assert(last_vf(E):find('"matrix":"2020ncl"'), last_vf(E))
 
 -- test_ui_sync: fps button shows the target, top bar shows the status line
@@ -111,7 +112,7 @@ E = make_env({ ["portable_config/engines/READY"] = { is_file = true } })
 E.props["container-fps"] = 23.976
 E.props["display-fps"] = 144
 E.props["video-params"] = VP
-E.observers["video-params"]("video-params", VP)
+E.props["video-params"] = VP; E.observers["video-params"]()
 local btn
 for _, c in ipairs(E.cmds) do if c:find("set%-button framegen_fps") then btn = c end end
 assert(btn and btn:find('"badge":"48"') and btn:find('"active":true'), btn)
@@ -142,5 +143,21 @@ eq(E.cmds[#E.cmds], "script-binding uosc/paste", "paste clicked")
 E.props["idle-active"] = false
 E.observers["idle-active"]("idle-active", false)
 eq(E.forced["fg-idle-click"], nil, "click unbound when playing")
+
+-- test_waits_for_stream_fps: no filter until the real fps is known, then re-plans when it changes
+E = make_env({ ["portable_config/engines/READY"] = { is_file = true } })
+E.props["display-fps"] = 144
+E.props["video-params"] = VP
+E.observers["video-params"]()
+eq(last_vf(E), nil, "no filter while fps unknown")
+E.props["container-fps"] = 29.97
+E.observers["container-fps"]()
+assert(last_vf(E):find('"num":60000') and last_vf(E):find('"den":1001'), last_vf(E))
+E.props["container-fps"] = 59.94
+E.observers["container-fps"]()
+assert(last_vf(E):find('"num":120000'), "re-planned for the real fps: " .. last_vf(E))
+local n = #E.cmds
+E.observers["container-fps"]()
+eq(#E.cmds, n, "same fps again changes nothing")
 
 print("test_main ok")

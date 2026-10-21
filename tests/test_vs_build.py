@@ -69,6 +69,15 @@ def test_odd_resolution():
     assert (out.width, out.height) == (1280, 536)
 
 
+def test_passthrough_when_not_faster_or_unknown():
+    sys.modules["vsmlrt"] = fake_vsmlrt(vs.RGBS)
+    video_in = core.std.BlankClip(format=vs.YUV420P8, width=640, height=360, length=10)
+    p = fg_vs.parse_params(PARAMS)  # target 60
+    assert fg_vs.build(video_in, 59.94, {**p, "num": 60000, "den": 1001}) is video_in  # target == source
+    assert fg_vs.build(video_in, 60.0, p) is video_in                                  # target == source
+    assert fg_vs.build(video_in, 0.0, p) is video_in                                   # fps unknown
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

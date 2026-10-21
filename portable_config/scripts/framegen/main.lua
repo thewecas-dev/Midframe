@@ -159,19 +159,20 @@ local function retarget()
     apply()
 end
 
-local function setup(vp)
+-- Set up once decoder params AND the real source fps are known; redo it if a stream's fps changes.
+-- Never guess the fps: streams often report it a moment after playback starts.
+local function try_setup()
+    local vp = mp.get_property_native("video-params")
     local n, d = fps.snap(mp.get_property_number("container-fps"))
-    if not n then n, d = 30000, 1001 end  -- same fallback as fg_vs.source_fps
+    if not (vp and vp.w and n) then return end
+    if S.src_num == n and S.src_den == d then return end
     S.src_num, S.src_den = n, d
     S.matrix = MATRIX[vp.colormatrix] or (vp.h and vp.h <= 576 and "170m" or "709")
     S.range = (vp.colorlevels == "full" or vp.colorlevels == "pc") and "full" or "limited"
     retarget()
 end
-
--- File lifecycle: set up once per file when decoder params are known.
-mp.observe_property("video-params", "native", function(_, vp)
-    if vp and vp.w and not S.src_num then setup(vp) end
-end)
+mp.observe_property("video-params", "native", try_setup)
+mp.observe_property("container-fps", "number", try_setup)
 mp.register_event("end-file", function()
     remove()
     S.src_num, S.levels, S.auto = nil, nil, nil
