@@ -119,6 +119,7 @@ end)
 mp.register_event("end-file", function()
     remove()
     S.src_num, S.levels, S.auto = nil, nil, nil
+    S.enabled = o.enabled  -- a failure only disables interpolation for the file it happened on
 end)
 
 -- Any filter error: turn interpolation off, keep playing.
@@ -126,7 +127,7 @@ mp.enable_messages("error")
 mp.register_event("log-message", function(e)
     if not S.added then return end
     local p, t = e.prefix or "", e.text or ""
-    if p:find("vapoursynth") or t:find("vapoursynth") or t:find("Disabling filter") then
+    if p:find("vapoursynth") or t:find("vapoursynth") or t:find("Disabling filter") or t:find("Python exception") then
         S.enabled = false
         remove()
         local line = t:gsub("%s+$", "")
