@@ -22,7 +22,11 @@ Design: `docs/specs/2026-10-21-framegen-design.md` · Plan: `docs/plans/2026-10-
   one time). Videos play at their original fps until the start screen says "RIFE ready".
 - **First video at a new size** (720p, 1440p, 4K…): one more engine is built for that size (a few minutes),
   while the video plays at its original fps. Engines are kept in `portable_config\engines`.
-- Keep the laptop plugged in.
+- Keep the laptop plugged in, and stop Windows from parking the GPU during playback (the debug overlay's
+  "GPU clock" line shows a few hundred MHz and P5 when it does, and frames drop even on the lightest level):
+  1. Settings → System → Display → Graphics → Add desktop app → `mpv.exe` from the install folder → Options → **High performance**.
+  2. NVIDIA Control Panel → Manage 3D settings → Program Settings → add `mpv.exe` → **Power management mode: Prefer maximum performance**.
+  3. Windows power mode (Settings → System → Power) set to **Best performance** while watching.
 
 ## How a level is picked
 

@@ -516,16 +516,18 @@ local function draw()
         auto_level = S.auto and S.auto.level, auto_total = S.levels and #S.levels,
         drops = mp.get_property_number("frame-drop-count"),
         delayed = mp.get_property_number("vo-delayed-frame-count"),
-        vram_mb = S.vram_mb, seek_ms = S.seek_ms, hist = S.hist,
+        vram_mb = S.vram_mb, gpu_mhz = S.gpu_mhz, gpu_max_mhz = S.gpu_max_mhz, gpu_pstate = S.gpu_pstate,
+        seek_ms = S.seek_ms, hist = S.hist,
     })
     ov:update()
 end
 local function poll_vram()
     mp.command_native_async({
         name = "subprocess", playback_only = false, capture_stdout = true,
-        args = { "nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits" },
+        args = { "nvidia-smi", "--query-gpu=memory.used,clocks.sm,clocks.max.sm,pstate", "--format=csv,noheader,nounits" },
     }, function(ok, res)
-        S.vram_mb = ok and tonumber((res.stdout or ""):match("%d+")) or nil
+        local mem, clk, max, ps = (ok and res.stdout or ""):match("(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(P%d+)")
+        S.vram_mb, S.gpu_mhz, S.gpu_max_mhz, S.gpu_pstate = tonumber(mem), tonumber(clk), tonumber(max), ps
         if S.vram_mb then push(S.hist.vram, S.vram_mb) end
     end)
 end

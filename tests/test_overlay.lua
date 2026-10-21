@@ -12,9 +12,10 @@ eq(overlay.graph({ 0, 5 }, 0, 0, 100, 50, 0), "m 0 50 l 0 50 l 100 50 l 100 50",
 local out = overlay.render({
     src_res = "1920×1080", src_fps = 24000 / 1001, target_fps = 60, real_fps = 59.8, display_fps = 144,
     level_label = "RIFE 4.26 full", backend = "TensorRT", auto_level = 1, auto_total = 7,
-    drops = 0, delayed = 0, vram_mb = 2310, seek_ms = 420,
+    drops = 0, delayed = 0, vram_mb = 2310, seek_ms = 420, gpu_mhz = 600, gpu_max_mhz = 3105, gpu_pstate = "P5",
     hist = { real_fps = { 60, 59 }, drops = { 0, 1 }, vram = { 2300, 2310 } },
 })
+assert(out:find("GPU clock 600 / 3105 MHz · P5  ← power-saving", 1, true), out)
 assert(out:find("→ target 60.000", 1, true), out)
 assert(out:find("level 1/7", 1, true), out)
 assert(out:find("seek 420 ms", 1, true), out)

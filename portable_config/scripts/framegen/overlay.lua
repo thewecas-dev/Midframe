@@ -43,6 +43,9 @@ function M.render(st)
         string.format("%s · %s · level %s/%s", q(st.level_label), q(st.backend), q(st.auto_level), q(st.auto_total)),
         string.format("dropped %s · late %s · VRAM %s MB · seek %s ms", q(st.drops), q(st.delayed), q(st.vram_mb),
             q(st.seek_ms)),
+        -- A laptop GPU parked in P5 at a few hundred MHz is the usual reason for drops with headroom to spare.
+        string.format("GPU clock %s / %s MHz · %s%s", q(st.gpu_mhz), q(st.gpu_max_mhz), q(st.gpu_pstate),
+            (st.gpu_mhz and st.gpu_max_mhz and st.gpu_mhz < st.gpu_max_mhz * 0.5) and "  ← power-saving, see README" or ""),
     }
     local top = 8 + #rows * 18 + 6
     local height = top + #GRAPHS * (GH + 16)
