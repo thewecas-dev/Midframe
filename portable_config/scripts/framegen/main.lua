@@ -1,5 +1,5 @@
 -- FrameGen: wires RIFE interpolation (vs/rife.vpy) into mpv with an fps menu,
--- auto step-down, failure fallback, crash-resume state and a debug overlay.
+-- auto step-down, failure fallback, crash-resume state, start screen, notices and a debug overlay.
 local mp = require "mp"
 local utils = require "mp.utils"
 local msg = require "mp.msg"
@@ -33,11 +33,26 @@ local MATRIX = { ["bt.709"] = "709", ["bt.601"] = "170m", ["bt.2020-ncl"] = "202
 
 local S = {
     enabled = o.enabled, choice = o.choice,
-    added = false, building = false, failed_msg = nil,
+    added = false, building = false, debug = false,
     hist = { real_fps = {}, drops = {}, vram = {} },
 }
 
-local function notice(text, secs) mp.osd_message(text, secs or 4) end
+local function osd_size()
+    local d = mp.get_property_native("osd-dimensions") or {}
+    return (d.w and d.w > 0) and d.w or 1280, (d.h and d.h > 0) and d.h or 720
+end
+
+-- Notices: one styled pill at the top centre (replaces mpv's plain OSD text).
+local ov_toast = mp.create_osd_overlay("ass-events")
+local toast_timer
+local function notice(text, secs, kind)
+    local w, h = osd_size()
+    ov_toast.res_x, ov_toast.res_y = w, h
+    ov_toast.data = overlay.toast(w, text, kind)
+    ov_toast:update()
+    if toast_timer then toast_timer:kill() end
+    toast_timer = mp.add_timeout(secs or 4, function() ov_toast:remove() end)
+end
 
 local function remove()
     if S.added then mp.commandv("vf", "remove", "@framegen") end
@@ -53,31 +68,67 @@ local function current()
     return S.levels[S.auto.level]
 end
 
-local apply
+local function target()
+    local lv = current()
+    if not (S.added and lv and not lv.off) then return nil end
+    local s = S.fps_steps[lv.fps]
+    return s.num / s.den, lv
+end
+
+-- Keep uosc's FPS / debug buttons and the top-bar status line in sync.
+local function sync_ui()
+    local t, lv = target()
+    local src = S.src_num and fps.fmt(S.src_num / S.src_den)
+    local tip = t and ("Frame rate: " .. src .. " → " .. fps.fmt(t) .. " fps (F)") or "Frame rate (F)"
+    mp.commandv("script-message-to", "uosc", "set-button", "framegen_fps", utils.format_json({
+        icon = "bolt", active = t ~= nil, badge = t and string.format("%d", math.floor(t + 0.5)) or nil,
+        tooltip = tip, command = "script-binding framegen/fps-menu",
+    }))
+    mp.commandv("script-message-to", "uosc", "set-button", "framegen_debug", utils.format_json({
+        icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding framegen/debug",
+    }))
+    local vp = mp.get_property_native("video-params") or {}
+    local status = ""
+    if vp.w and src then
+        status = vp.w .. "×" .. vp.h .. " · " .. src .. " fps"
+        if t then status = status .. " → " .. fps.fmt(t) .. " fps · " .. LADDER[lv.rife].label
+        else status = status .. " · interpolation off" end
+    end
+    mp.set_property_native("user-data/framegen/status", status)
+end
+
+local apply, draw_idle
 
 local function prepare()
-    notice("Preparing RIFE (first run, several minutes)… playing without interpolation", 6)
+    if not mp.get_property_bool("idle-active") then
+        notice("Preparing RIFE (first run, several minutes)… playing without interpolation", 6, "warn")
+    end
     if S.building then return end
     S.building = true
+    if draw_idle then draw_idle() end
     mp.command_native_async({
         name = "subprocess", args = { expand(o.python), BUILDER, ENGINES },
         playback_only = false, capture_stdout = true, capture_stderr = true,
     }, function(ok, res)
         S.building = false
+        draw_idle()
         if ok and res.status == 0 and engines_ready() then
-            notice("RIFE ready", 3)
+            notice("RIFE ready", 3, "good")
             apply()
         else
             local err = (res and res.stderr or ""):match("([^\n]+)\n*$") or "unknown error"
             msg.error("engine build failed: " .. ((res and res.stderr) or ""))
-            notice("RIFE setup failed: " .. err, 8)
+            notice("RIFE setup failed: " .. err, 8, "bad")
         end
     end)
 end
 
 apply = function()
     local lv = current()
-    if not (S.enabled and lv and not lv.off) then return remove() end
+    if not (S.enabled and lv and not lv.off) then
+        remove()
+        return sync_ui()
+    end
     if not engines_ready() then return prepare() end
     local step = S.fps_steps[lv.fps]
     local json = utils.format_json({
@@ -87,6 +138,7 @@ apply = function()
     S.added = true
     mp.commandv("vf", "add", "@framegen:vapoursynth=file=" .. quoted(VPY) ..
         ":buffered-frames=8:concurrent-frames=4:user-data=" .. quoted(json))
+    sync_ui()
 end
 
 local function retarget()
@@ -95,7 +147,8 @@ local function retarget()
     if not tn then
         msg.info("no interpolation: " .. err)
         S.levels = nil
-        return remove()
+        remove()
+        return sync_ui()
     end
     S.fps_steps = auto.fps_steps(tn, td, S.src_num, S.src_den)
     S.levels = auto.levels(#LADDER, S.fps_steps)
@@ -120,7 +173,9 @@ mp.register_event("end-file", function()
     remove()
     S.src_num, S.levels, S.auto = nil, nil, nil
     S.enabled = o.enabled  -- a failure only disables interpolation for the file it happened on
+    sync_ui()
 end)
+mp.register_script_message("uosc-version", sync_ui)  -- uosc (re)loaded: re-send our buttons
 
 -- Any filter error: turn interpolation off, keep playing.
 mp.enable_messages("error")
@@ -130,8 +185,9 @@ mp.register_event("log-message", function(e)
     if p:find("vapoursynth") or t:find("vapoursynth") or t:find("Disabling filter") or t:find("Python exception") then
         S.enabled = false
         remove()
+        sync_ui()
         local line = t:gsub("%s+$", "")
-        notice("Interpolation turned off: " .. line, 6)
+        notice("Interpolation turned off: " .. line, 6, "bad")
         msg.warn("interpolation disabled after: " .. line)
     end
 end)
@@ -161,17 +217,17 @@ mp.add_periodic_timer(1, function()
     push(S.hist.real_fps, S.real_fps or 0)
     push(S.hist.drops, dps)
 
-    local lv = current()
-    if not (S.added and lv and not lv.off) or mp.get_property_bool("pause") then return end
-    local step = S.fps_steps[lv.fps]
-    local action = auto.tick(S.auto, { drops = drops, delayed = delayed, vf_fps = vf_fps, target = step.num / step.den },
-        mp.get_time())
+    local t = target()
+    if not t or mp.get_property_bool("pause") then return end
+    local action = auto.tick(S.auto, { drops = drops, delayed = delayed, vf_fps = vf_fps, target = t }, mp.get_time())
     if not action then return end
-    lv = current()
+    local lv = current()
     if lv.off then
-        notice("Too heavy for real-time: playing original fps", 5)
+        notice("Too heavy for real-time: playing original fps", 5, "warn")
+    elseif action == "down" then
+        notice("Auto: stepped down to " .. LADDER[lv.rife].label .. " to stay smooth", 4, "warn")
     else
-        msg.info("auto " .. action .. " -> level " .. S.auto.level)
+        msg.info("auto up -> level " .. S.auto.level)
     end
     apply()
 end)
@@ -188,50 +244,65 @@ end
 mp.add_periodic_timer(5, save_state)
 mp.register_event("shutdown", save_state)
 
--- FPS menu.
+-- Frame-rate menu (uosc menu).
 local function set_choice(choice)
     S.choice, S.enabled = choice, true
     retarget()
-    local lv = current()
-    if lv then
-        local s = S.fps_steps[1]
-        notice("Frame rate: " .. fps.fmt(S.src_num / S.src_den) .. " → " .. fps.fmt(s.num / s.den) .. " fps", 3)
-    end
+    local t = target()
+    if t then notice("Frame rate: " .. fps.fmt(S.src_num / S.src_den) .. " → " .. fps.fmt(t) .. " fps", 3, "info") end
 end
 mp.register_script_message("set-fps", set_choice)
 
-mp.add_key_binding("F", "fps-menu", function()
-    if not S.src_num then return notice("No video loaded", 2) end
-    local opts = fps.options(S.src_num, S.src_den, fps.cap(mp.get_property_number("display-fps")))
-    local items, default = {}, nil
-    for i, op in ipairs(opts) do
-        items[i] = op.label
-        if op.choice == S.choice then default = i end
-    end
-    items[#items + 1] = "Custom…"
-    items[#items + 1] = S.enabled and "Turn interpolation off" or "Turn interpolation on"
-    input.select({
-        prompt = "Frame rate:", items = items, default_item = default,
-        submit = function(i)
-            if opts[i] then return set_choice(opts[i].choice) end
-            if i == #opts + 1 then
-                return mp.add_timeout(0.05, function()
-                    input.get({
-                        prompt = "Target fps:",
-                        submit = function(text)
-                            local n, _, err = fps.resolve(text, S.src_num, S.src_den,
-                                fps.cap(mp.get_property_number("display-fps")))
-                            input.terminate()
-                            if n then set_choice(text) else notice("Invalid fps: " .. err, 4) end
-                        end,
-                    })
-                end)
-            end
-            S.enabled = not S.enabled
-            notice("Interpolation " .. (S.enabled and "on" or "off"), 2)
-            if S.enabled then retarget() else remove() end
+mp.register_script_message("toggle", function()
+    S.enabled = not S.enabled
+    notice("Interpolation " .. (S.enabled and "on" or "off"), 2, "info")
+    if S.enabled then retarget() else remove(); sync_ui() end
+end)
+
+mp.register_script_message("fps-custom", function()
+    input.get({
+        prompt = "Target fps:",
+        submit = function(text)
+            local n, _, err = fps.resolve(text, S.src_num, S.src_den, fps.cap(mp.get_property_number("display-fps")))
+            input.terminate()
+            if n then set_choice(text) else notice("Invalid fps: " .. err, 4, "bad") end
         end,
     })
+end)
+
+local function header(title) return { title = title, value = "ignore", muted = true, bold = true, selectable = false } end
+
+mp.add_key_binding("F", "fps-menu", function()
+    if not S.src_num then return notice("Open a video first", 2, "info") end
+    local cap = fps.cap(mp.get_property_number("display-fps"))
+    local items = { header("Multiply") }
+    local fixed_started = false
+    for _, op in ipairs(fps.options(S.src_num, S.src_den, cap)) do
+        local is_fixed = op.choice:sub(1, 1) ~= "x"
+        if is_fixed and not fixed_started then
+            items[#items + 1] = header("Fixed")
+            fixed_started = true
+        end
+        local t = op.num / op.den
+        items[#items + 1] = {
+            title = is_fixed and (op.choice .. " fps") or (op.choice:sub(2) .. "×"),
+            hint = is_fixed and (math.abs(t - cap) < 0.5 and "matches display" or nil) or (fps.fmt(t) .. " fps"),
+            value = { "script-message-to", "framegen", "set-fps", op.choice },
+            active = S.enabled and op.choice == S.choice or nil,
+        }
+    end
+    items[#items].separator = true
+    items[#items + 1] = { title = "Custom…", hint = "type a value", value = "script-message-to framegen fps-custom" }
+    local lv = current()
+    items[#items + 1] = {
+        title = "Interpolation", value = "script-message-to framegen toggle",
+        icon = S.enabled and "toggle_on" or "toggle_off",
+        hint = S.enabled and (lv and not lv.off and LADDER[lv.rife].label or "on") or "off",
+    }
+    mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json({
+        type = "framegen_fps", title = "Frame rate", items = items, search_style = "disabled",
+        footnote = "Source " .. fps.fmt(S.src_num / S.src_den) .. " fps · Display " .. cap .. " Hz",
+    }))
 end)
 
 -- Debug overlay (toggle with D).
@@ -240,15 +311,14 @@ ov.res_x, ov.res_y = 1280, 720
 local ov_timer, vram_timer
 local function draw()
     local vp = mp.get_property_native("video-params") or {}
-    local lv = current()
-    local step = lv and not lv.off and S.fps_steps[lv.fps]
+    local t, lv = target()
     ov.data = overlay.render({
         src_res = vp.w and (vp.w .. "×" .. vp.h),
         src_fps = S.src_num and S.src_num / S.src_den,
-        target_fps = step and step.num / step.den,
+        target_fps = t,
         real_fps = S.real_fps,
         display_fps = mp.get_property_number("display-fps"),
-        level_label = (not S.added and "interpolation off") or (lv and LADDER[lv.rife].label),
+        level_label = lv and LADDER[lv.rife].label or "interpolation off",
         backend = "TensorRT",
         auto_level = S.auto and S.auto.level, auto_total = S.levels and #S.levels,
         drops = mp.get_property_number("frame-drop-count"),
@@ -267,13 +337,45 @@ local function poll_vram()
     end)
 end
 mp.add_key_binding("D", "debug", function()
-    if ov_timer then
+    S.debug = not S.debug
+    if S.debug then
+        draw(); poll_vram()
+        ov_timer = mp.add_periodic_timer(0.25, draw)
+        vram_timer = mp.add_periodic_timer(2, poll_vram)
+    else
         ov_timer:kill(); vram_timer:kill()
-        ov_timer, vram_timer = nil, nil
         ov:remove()
+    end
+    sync_ui()
+end)
+
+-- Start screen while nothing is loaded.
+local ov_idle = mp.create_osd_overlay("ass-events")
+local idle_boxes
+local function idle_click()
+    local m = mp.get_property_native("mouse-pos") or {}
+    if overlay.hit(idle_boxes and idle_boxes.open, m.x or -1, m.y or -1) then
+        mp.commandv("script-binding", "uosc/open-file")
+    elseif overlay.hit(idle_boxes and idle_boxes.paste, m.x or -1, m.y or -1) then
+        mp.commandv("script-binding", "uosc/paste")
+    end
+end
+draw_idle = function()
+    if not mp.get_property_bool("idle-active") then
+        ov_idle:remove()
+        mp.remove_key_binding("fg-idle-click")
         return
     end
-    draw(); poll_vram()
-    ov_timer = mp.add_periodic_timer(0.25, draw)
-    vram_timer = mp.add_periodic_timer(2, poll_vram)
-end)
+    local w, h = osd_size()
+    local state = (S.building and "building") or (engines_ready() and "ready") or "missing"
+    ov_idle.res_x, ov_idle.res_y = w, h
+    ov_idle.data, idle_boxes = overlay.idle(w, h, state)
+    ov_idle:update()
+    mp.add_forced_key_binding("MBTN_LEFT", "fg-idle-click", idle_click)
+end
+mp.observe_property("idle-active", "bool", draw_idle)
+mp.observe_property("osd-dimensions", "native", function() draw_idle() end)
+
+-- Build the TensorRT engines right away on first launch instead of waiting for a video.
+if not engines_ready() then prepare() end
+sync_ui()

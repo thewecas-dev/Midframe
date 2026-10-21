@@ -24,4 +24,25 @@ assert(out:find("\\p1", 1, true), "has graphs")
 out = overlay.render({ hist = { real_fps = {}, drops = {}, vram = {} } })
 assert(out:find("VRAM ? MB", 1, true), out)
 
+-- rounded rect starts after the top-left corner and closes back on it
+local r = overlay.rrect(0, 0, 100, 40, 10)
+assert(r:sub(1, 6) == "m 10 0", r)
+assert(r:find("b 0 0 0 0 10 0$"), r)
+eq(overlay.rrect(0, 0, 10, 10, 50):sub(1, 5), "m 5 0", "radius clamped to half size")
+
+-- toast centres on screen and carries the message
+local t = overlay.toast(1000, "Frame rate: 23.976 → 60 fps", "info")
+assert(t:find("Frame rate: 23.976 → 60 fps", 1, true), t)
+local x = tonumber(t:match("m (%d+) 24"))
+assert(x and x > 300 and x < 500, "toast x " .. tostring(x))
+
+-- idle screen: buttons are clickable, side by side, inside the window
+local ass, boxes = overlay.idle(1440, 810, "ready")
+assert(ass:find("Drop a video here", 1, true) and ass:find("RIFE ready", 1, true), ass)
+assert(overlay.hit(boxes.open, (boxes.open[1] + boxes.open[3]) / 2, (boxes.open[2] + boxes.open[4]) / 2), "open hit")
+assert(not overlay.hit(boxes.open, boxes.paste[1] + 5, boxes.paste[2] + 5), "boxes don't overlap")
+assert(boxes.open[3] < boxes.paste[1], "open left of paste")
+assert(not overlay.hit(nil, 1, 1), "nil box")
+assert(select(1, overlay.idle(1440, 810, "building")):find("Preparing RIFE", 1, true))
+
 print("test_overlay ok")
