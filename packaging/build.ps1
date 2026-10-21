@@ -44,6 +44,9 @@ $inst = Get-File "$gh/vapoursynth/vapoursynth/releases/download/$VS_VER/Install-
 Expand-Archive $inst "$dl\vsinst" -Force
 & "$dl\vsinst\Install-Portable-VapourSynth-$VS_VER.ps1" -TargetFolder "$app\vs-runtime" -Unattended
 if (-not (Get-ChildItem "$app\vs-runtime" -Recurse -Filter VSScript.dll)) { throw "VapourSynth install failed" }
+# vsmlrt rewrites the RIFE model with the onnx package for scale < 1 (the 4.6 half/quarter levels)
+& "$app\vs-runtime\python.exe" -m pip install --no-warn-script-location "onnx==1.23.2"
+if ($LASTEXITCODE) { throw "pip install onnx failed" }
 
 # vs-mlrt TensorRT runtime (split archive) + only the RIFE models we use
 $mlrt = "$gh/AmusementClub/vs-mlrt/releases/download/$MLRT_TAG"
