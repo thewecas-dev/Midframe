@@ -212,7 +212,7 @@ apply = function()
     })
     S.added = true
     mp.commandv("vf", "add", "@framegen:vapoursynth=file=" .. quoted(VPY) ..
-        ":buffered-frames=8:concurrent-frames=8:user-data=" .. quoted(json))
+        ":buffered-frames=8:concurrent-frames=4:user-data=" .. quoted(json))
     sync_ui()
 end
 
@@ -313,10 +313,8 @@ mp.add_periodic_timer(1, function()
     local lv = current()
     if lv.off then
         notice("Too heavy for real-time: playing original fps", 5, "warn")
-    elseif action == "down" then
-        notice("Auto: stepped down to " .. LADDER[lv.rife].label .. " to stay smooth", 4, "warn")
     else
-        msg.info("auto up -> level " .. S.auto.level)
+        notice("Auto: stepped down to " .. LADDER[lv.rife].label .. " to stay smooth", 4, "warn")
     end
     apply()
 end)

@@ -197,7 +197,7 @@ local n, js = vf:match("user%-data=%%(%d+)%%(.*)$")
 eq(tonumber(n), #js, "user-data length prefix")
 assert(js:find('"num":48000') and js:find('"den":1001') and js:find('"level":1'), js)
 assert(js:find('"matrix":"709"') and js:find('"range":"limited"'), js)
-assert(vf:find("concurrent%-frames=8"), "8 frames in flight")
+assert(vf:find("concurrent%-frames=4"), "4 frames in flight")
 
 -- test_set_fps_message + prefs persisted
 E.messages["set-fps"]("60")

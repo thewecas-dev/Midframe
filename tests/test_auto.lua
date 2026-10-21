@@ -50,20 +50,11 @@ local seq = { [W + 1] = SLOW, [W + 2] = SLOW, [W + 3] = GOOD, [W + 4] = SLOW, [W
 acts = feed(st, W, W + 5, function(t) return (seq[t] or GOOD)() end, {})
 eq(#acts, 0, "non-consecutive bad")
 
--- test_steps_up_after_stable
-st = auto.new(lv, 0); st.level = 2
-acts = feed(st, W, W + 40, GOOD, {})
-eq(acts[1] and acts[1].a, "up", "up after stable"); eq(st.level, 1)
-
--- test_blocks_after_failed_up
-st = auto.new(lv, 0); st.level = 2
-acts = feed(st, W, W + 40, GOOD, {})          -- goes up to 1 around t=33
-local up_t = acts[1].t
-acts = feed(st, up_t + 1, up_t + auto.FAIL_WINDOW, SLOW, {})  -- fails right after stepping up
-eq(acts[1].a, "down"); eq(st.level, 2); assert(st.blocked[1], "level 1 blocked")
-assert(auto.FAIL_WINDOW > auto.WARMUP + auto.BAD_TICKS, "a failed step-up must be detectable")
-acts = feed(st, up_t + auto.FAIL_WINDOW + 1, up_t + 200, GOOD, {})
-eq(#acts, 0, "never retries a blocked level")
+-- test_never_steps_up: a level that failed is blocked; calm playback never triggers a reload
+st = auto.new(lv, 0)
+acts = feed(st, W, W + 3, SLOW, {})
+eq(st.level, 2); assert(st.blocked[1], "failed level blocked")
+eq(#feed(st, W + 4, W + 400, GOOD, {}), 0, "no step up, ever")
 
 -- test_off_is_terminal
 st = auto.new(lv, 0); st.level = 7

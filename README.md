@@ -32,7 +32,9 @@ Design: `docs/specs/2026-10-21-framegen-design.md` · Plan: `docs/plans/2026-10-
 
 Each engine is measured once on your GPU (`engines\cal_<w>x<h>.json`). A video starts at the best RIFE level
 whose measured speed covers the frames it needs with 20% headroom; auto mode never tries levels already known
-to be too slow. Ladder (best quality first): RIFE 4.26 → RIFE 4.6 → RIFE 4.6 half scale → RIFE 4.6 quarter.
+to be too slow. During playback it only ever steps down (each level change reloads the filter, a 1–2 s stall),
+and a level that failed stays blocked until the next file. On a 144 Hz panel, prefer 2× (48) and 3× (72) for
+24 fps sources: 60 fps needs an uneven 2.4 refreshes per frame. Ladder (best quality first): RIFE 4.26 → RIFE 4.6 → RIFE 4.6 half scale → RIFE 4.6 quarter.
 
 ## Build the installer (on Windows)
 

@@ -1,11 +1,9 @@
--- Auto performance mode: step down when playback can't keep up, carefully step back up.
+-- Auto performance mode: step down when playback can't keep up (one way, per file).
 local M = {}
 
 -- WARMUP covers the filter reload (TensorRT engine load) after any level change or seek, which
 -- otherwise looks like slowness and makes auto mode step down for nothing.
-M.WARMUP, M.BAD_TICKS, M.STABLE_UP = 8, 3, 30
--- A level that fails this soon after stepping up to it gets blocked; must exceed WARMUP + BAD_TICKS.
-M.FAIL_WINDOW = M.WARMUP + M.BAD_TICKS + 4
+M.WARMUP, M.BAD_TICKS = 8, 3
 M.DROP_TOL = 2  -- dropped frames per second tolerated before a tick counts as bad
 
 -- Target fps fallbacks, highest first: target, 60, 2x source (each only if below target).
@@ -34,14 +32,15 @@ function M.levels(rife_count, fps_steps)
 end
 
 local function changed(st, now)
-    st.warm_until, st.good_since, st.bad, st.prev = now + M.WARMUP, now + M.WARMUP, 0, nil
+    st.warm_until, st.bad, st.prev = now + M.WARMUP, 0, nil
 end
 
 -- After a seek the filter reloads; give it a fresh warm-up without changing level.
 M.rewarm = changed
 
--- start: first level to try. Levels above it are blocked: calibration already showed they're too slow,
--- and every failed try costs a multi-second filter reload.
+-- start: first level to try. Levels above it are blocked: calibration already showed they're too slow.
+-- Auto mode only ever steps down, and blocks each level it leaves: every level change reloads the
+-- filter, which stalls playback for 1-2 s, so trying to climb back costs more than it can gain.
 function M.new(levels, now, start)
     local st = { levels = levels, level = start or 1, blocked = {} }
     for i = 1, st.level - 1 do st.blocked[i] = true end
@@ -94,22 +93,16 @@ function M.tick(st, s, now)
 
     local bad = s.drops - prev.drops > M.DROP_TOL or s.delayed - prev.delayed > 2
         or (s.vf_fps ~= nil and s.vf_fps < 0.95 * s.target)
-    if bad then
-        st.bad, st.good_since = st.bad + 1, now
-        if st.bad < M.BAD_TICKS then return nil end
-        if st.up_level == st.level and now - st.up_time <= M.FAIL_WINDOW then st.blocked[st.level] = true end
-        st.level = st.level + 1
-        changed(st, now)
-        return "down"
+    if not bad then
+        st.bad = 0
+        return nil
     end
-    st.bad = 0
-    if st.level > 1 and not st.blocked[st.level - 1] and now - st.good_since >= M.STABLE_UP then
-        st.level = st.level - 1
-        st.up_level, st.up_time = st.level, now
-        changed(st, now)
-        return "up"
-    end
-    return nil
+    st.bad = st.bad + 1
+    if st.bad < M.BAD_TICKS then return nil end
+    st.blocked[st.level] = true
+    st.level = st.level + 1
+    changed(st, now)
+    return "down"
 end
 
 return M
