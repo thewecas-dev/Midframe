@@ -11,7 +11,8 @@ $VS_VER    = "R79"  # R80+ dropped API3, which vs-mlrt's vstrt.dll still uses
 $MLRT_TAG  = "v15.16"
 $UOSC_TAG  = "5.13.0"
 $YTDLP_TAG = "2026.08.19"
-$RIFE_MODELS = @("rife_v4.26.onnx", "rife_v4.25_lite.onnx", "rife_v4.6.onnx")  # must match portable_config\vs\ladder.json
+# Must match portable_config\vs\ladder.json. rife_v2/ is the faster "v2" network used for RIFE 4.26.
+$RIFE_MODELS = @("rife/rife_v4.26.onnx", "rife_v2/rife_v4.26.onnx", "rife/rife_v4.6.onnx")
 
 $root  = Split-Path $PSScriptRoot
 $build = "$root\build"
@@ -56,15 +57,13 @@ Expand-7z $part1 $plugins
 # RIFE models ship separately; each archive holds rife/<model>.onnx (v4.6 lives in the older rife_v8 bundle)
 $ext = "$gh/AmusementClub/vs-mlrt/releases/download"
 $modelArchives = @{
-    "rife_v4.26.onnx"      = "$ext/external-models/rife_v4.26.7z"
-    "rife_v4.25_lite.onnx" = "$ext/external-models/rife_v4.25_lite.7z"
-    "rife_v4.6.onnx"       = "$ext/model-20220923/rife_v8.7z"
+    "rife/rife_v4.26.onnx"    = "$ext/external-models/rife_v4.26.7z"
+    "rife_v2/rife_v4.26.onnx" = "$ext/external-models/rife_v4.26.7z"
+    "rife/rife_v4.6.onnx"     = "$ext/model-20220923/rife_v8.7z"
 }
 foreach ($m in $RIFE_MODELS) {
-    Expand-7z (Get-File $modelArchives[$m]) "$plugins\models" @("rife\$m")
-}
-foreach ($m in $RIFE_MODELS) {
-    if (-not (Test-Path "$plugins\models\rife\$m")) { throw "missing RIFE model $m (archive layout changed?)" }
+    Expand-7z (Get-File $modelArchives[$m]) "$plugins\models" @(($m -replace "/", "\"))
+    if (-not (Test-Path "$plugins\models\$m")) { throw "missing RIFE model $m (archive layout changed?)" }
 }
 if (-not (Test-Path "$plugins\vstrt.dll")) { throw "vstrt.dll not found (archive layout changed?)" }
 

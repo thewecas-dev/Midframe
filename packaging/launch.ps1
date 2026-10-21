@@ -19,6 +19,8 @@ if ($vsscript) {
     $env:PATH = "$app\vs-runtime;$($vsscript.DirectoryName);$app;$env:PATH"
 }
 $state = "$app\portable_config\framegen-last.json"
+# Load CUDA kernels on first use: faster TensorRT engine load after every seek (the filter reloads).
+$env:CUDA_MODULE_LOADING = "LAZY"
 
 # YouTube changes often: update yt-dlp in the background once a week.
 $stamp = "$app\yt-dlp.updated"
@@ -43,6 +45,6 @@ for ($i = 0; $i -le 2; $i++) {
     if ($p.ExitCode -ge 0 -and $p.ExitCode -le 4) { break }
     if (-not (Test-Path $state)) { break }
     $last = Get-Content $state -Raw | ConvertFrom-Json
-    $argv = @("--start=$($last.pos)", "--script-opts=framegen-enabled=no",
+    $argv = @("--start=$($last.pos)", "--script-opts=framegen-enabled=no,framegen-ask=no",
         "--osd-playing-msg=Recovered from a crash - interpolation off (press F to turn it back on)", $last.path)
 }

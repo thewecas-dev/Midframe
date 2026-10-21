@@ -14,9 +14,21 @@ Design: `docs/specs/2026-10-21-framegen-design.md` · Plan: `docs/plans/2026-10-
 | F | Frame-rate menu: presets, Custom…, interpolation on/off |
 | D | Debug overlay: source vs output, auto level, drops, VRAM, seek time, graphs |
 
-- The quality menu is the stream-quality button in the bottom bar (YouTube only).
-- On first launch, FrameGen builds the RIFE TensorRT engines in the background, which takes several minutes. Video plays normally until they're ready.
+- Before each video starts, FrameGen asks the **frame rate**; for YouTube it first asks the **quality**
+  (Auto / 2160p / 1440p / 1080p / 720p / 480p). Enter accepts the highlighted (last used) answer, Esc keeps it.
+  Turn the prompts off with `ask=no` in `portable_config\script-opts\framegen.conf`.
+- The quality can also be changed during playback from the stream-quality button in the bottom bar.
+- **First launch:** FrameGen builds and measures the RIFE engines for 1080p in the background (10–20 min,
+  one time). Videos play at their original fps until the start screen says "RIFE ready".
+- **First video at a new size** (720p, 1440p, 4K…): one more engine is built for that size (a few minutes),
+  while the video plays at its original fps. Engines are kept in `portable_config\engines`.
 - Keep the laptop plugged in.
+
+## How a level is picked
+
+Each engine is measured once on your GPU (`engines\cal_<w>x<h>.json`). A video starts at the best RIFE level
+whose measured speed covers the frames it needs with 20% headroom; auto mode never tries levels already known
+to be too slow. Ladder (best quality first): RIFE 4.26 → RIFE 4.6 → RIFE 4.6 half scale → RIFE 4.6 quarter.
 
 ## Build the installer (on Windows)
 
@@ -26,19 +38,24 @@ Design: `docs/specs/2026-10-21-framegen-design.md` · Plan: `docs/plans/2026-10-
 
 ## Tests (any OS)
 
-`tests/run.sh` needs `lua` and `python3` (set `VS_PYTHON` to a Python with VapourSynth to also run the filter test). It covers the fps math, auto step-down, overlay, mpv wiring (with a stub mpv) and the frame-hold logic.
-The GPU path can only be tested on Windows, using the checklist below.
+`tests/run.sh` needs `lua` and `python3` (set `VS_PYTHON` to a Python with VapourSynth to also run the filter test).
+It covers the fps math, auto step-down, overlay, mpv wiring with prompts and build queue (against a stub mpv),
+the frame-hold logic and the filter graph itself (with a stand-in for the GPU part of RIFE).
+The GPU path can only be tested on Windows: `vs-runtime\python.exe portable_config\vs\bench.py [w h]`
+prints raw RIFE and full-filter speed per level and records the calibration.
 
 ## Windows acceptance checklist (RTX 4050, plugged in)
 
 Turn on the debug overlay (D) for each check.
 
-- [ ] 1080p 24fps file at 2×: real ≈ 47.9, 0 drops over 60s.
-- [ ] 1080p YouTube at 60: smooth, and the quality menu switches stream. Nothing is saved except `portable_config\engines`.
-- [ ] Seek 10 times: `seek` stays under 1000 ms each time, and audio stays in sync.
+- [ ] First launch: start screen shows "Preparing RIFE…", later "RIFE ready"; `engines\cal_1920x1080.json` has 4 numbers.
+- [ ] 1080p 24fps file at 2×: starts at the level `bench.py` says keeps up, real ≈ 47.9, drops flat over 60s.
+- [ ] 1080p YouTube: quality prompt, then frame-rate prompt, then smooth playback; the quality button switches stream.
+- [ ] Seek 10 times: `seek` stays under 1500 ms each time, and audio stays in sync.
 - [ ] Anime clip: no melting at scene cuts, and held drawings stay held.
-- [ ] 4K at 144: auto steps down with no visible stutter, and ends on a notice if it has to.
+- [ ] 4K at 144: starts at the fastest level, auto steps down with no visible stutter, ends on a notice if it has to.
 - [ ] Rename `portable_config\engines` while playing, then seek: an "Interpolation turned off" notice appears and playback continues.
-- [ ] End `mpv.exe` in Task Manager: FrameGen reopens at the same spot with interpolation off.
+- [ ] End `mpv.exe` in Task Manager: FrameGen reopens at the same spot with interpolation off and no prompts.
 
-If something fails, the mpv log helps. Start `mpv.exe --log-file=fg.log` from the install folder and reproduce the problem.
+If something fails: `portable_config\framegen-error.log` (filter errors), `portable_config\engines\build-error.log`
+(engine builds), or start `mpv.exe --log-file=fg.log` from the install folder and reproduce the problem.

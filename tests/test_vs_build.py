@@ -21,9 +21,11 @@ def fake_vsmlrt(out_format):
     m.Backend = types.SimpleNamespace(TRT=lambda **kw: kw)
     m.RIFEModel = lambda v: v
 
-    def RIFE(clip, multi, scale, model, backend, video_player):
+    def RIFE(clip, multi, scale, model, backend, video_player, _implementation=None):
         assert clip.format.color_family == vs.RGB and clip.format.sample_type == vs.FLOAT
-        assert clip.width % 64 == 0 and clip.height % 64 == 0, (clip.width, clip.height)
+        need = int(round(32 / scale))
+        assert clip.width % need == 0 and clip.height % need == 0, (clip.width, clip.height, scale)
+        assert backend["static_shape"] and backend["output_format"] == 1
         mult = Fraction(multi)
         fps = clip.fps * mult
         return core.std.BlankClip(clip, format=out_format, length=int(clip.num_frames * mult),
@@ -83,11 +85,11 @@ def test_build_engines_writes_calibration():
     import build_engines
     sys.modules["vsmlrt"] = fake_vsmlrt(vs.RGBS)
     with tempfile.TemporaryDirectory() as d:
-        build_engines.main(d)
-        with open(os.path.join(d, "READY")) as f:
-            cal = json.load(f)
-    assert (cal["w"], cal["h"]) == (1920, 1080)
-    assert len(cal["levels"]) == len(fg_vs.LADDER) and all(x > 0 for x in cal["levels"]), cal
+        cal = build_engines.main(d, 1280, 720, ["3"])
+        assert list(cal) == [3] and cal[3] > 0, cal
+        cal = build_engines.main(d, 1280, 720)          # fills the rest, keeps level 3
+        assert sorted(cal) == [1, 2, 3, 4], cal
+        assert fg_vs.read_cal(d, 1280, 720) == cal
 
 
 if __name__ == "__main__":

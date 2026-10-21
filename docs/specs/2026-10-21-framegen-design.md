@@ -142,3 +142,19 @@ direction (Windows app, RIFE):
 | 4K | 60fps | At the edge; lightest model and lowest scale, may fall back to original fps |
 
 The laptop must be on mains power: on battery the GPU slows down a lot.
+
+## Revisions after the first Windows runs (2026-10-21)
+
+Measured on the RTX 4050 Laptop (dynamic-shape engines, 1080p, 2×): RIFE 4.26 ≈ 43 output fps,
+RIFE 4.6 half ≈ 105, quarter ≈ 121. Real-time 1080p needs ≥ 48. Changes made as a result:
+
+- **Per-resolution static TensorRT engines** (fp16 in/out, CUDA graphs, 2 streams) replace the one
+  dynamic engine: faster inference and quicker reload after each seek. 1080p engines are built and
+  measured at first launch; other sizes on first use (one level, a few minutes, original fps meanwhile).
+- **Calibrated start level:** each video starts at the best level whose measured speed covers the needed
+  frames with 20% headroom; levels known to be too slow are never tried, so there is no step-down cycle.
+- **Ladder:** RIFE 4.26 (v2 network) → RIFE 4.6 → RIFE 4.6 half → RIFE 4.6 quarter. RIFE 4.25 lite was
+  dropped (measured slower than 4.26).
+- **Before-playback prompts:** quality (YouTube) and frame rate, via uosc menus inside mpv's load hooks;
+  the last answers are the defaults; `ask=no` disables them; a 90 s timeout means loading can never hang.
+- **Scene cuts** come from the frame-difference statistic instead of the `misc` plugin (not in portable R79).

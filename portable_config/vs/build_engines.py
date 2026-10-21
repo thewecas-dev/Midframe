@@ -1,12 +1,11 @@
-"""Pre-build the TensorRT engine for every ladder level, then measure each level's speed on this GPU,
-so playback can start at a level that keeps up instead of stepping down through slow ones.
+"""Build the TensorRT engine for RIFE levels at one frame size, measure each on this GPU, and record
+the result in <engines>/cal_<w>x<h>.json so playback starts at a level that keeps up.
 
-Usage: python build_engines.py <engines_dir>
-Writes <engines_dir>/READY as JSON: {"w": 1920, "h": 1080, "levels": [output fps at 2x, per level]}.
+Usage: python build_engines.py <engines_dir> <width> <height> [level ...]
+       (no levels = every ladder level; levels already measured for this size are skipped)
 Engines that already exist are reused (vsmlrt skips the build), so re-running only re-measures.
 """
 import gc
-import json
 import os
 import sys
 import time
@@ -14,18 +13,17 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fg_vs
 
-W, H = 1920, 1080
 FRAMES = 96
 
 
-def measure(level, engines):
-    """Output fps of raw RIFE at 2x on 1080p (half the frames are interpolated)."""
+def measure(level, engines, width, height):
+    """Output fps of raw RIFE at 2x (half the frames are interpolated) for width x height."""
     import vapoursynth as vs
     core = vs.core
-    a = core.std.BlankClip(format=vs.RGBH, width=W, height=H, length=1, color=[0.40, 0.40, 0.40])
-    b = core.std.BlankClip(format=vs.RGBH, width=W, height=H, length=1, color=[0.45, 0.45, 0.45])
+    a = core.std.BlankClip(format=vs.RGBH, width=width, height=height, length=1, color=[0.40, 0.40, 0.40])
+    b = core.std.BlankClip(format=vs.RGBH, width=width, height=height, length=1, color=[0.45, 0.45, 0.45])
     clip = fg_vs.rife(core.std.Interleave([a * FRAMES, b * FRAMES]), 2, level, engines)[:FRAMES]
-    for _ in clip[:8].frames(prefetch=8):  # warm-up: engine load, first inferences
+    for _ in clip[:8].frames(prefetch=8):  # warm-up: engine build/load, first inferences
         pass
     t = time.perf_counter()
     for _ in clip.frames(prefetch=8):
@@ -36,19 +34,21 @@ def measure(level, engines):
     return round(fps, 1)
 
 
-def main(engines):
-    os.makedirs(engines, exist_ok=True)
-    levels = []
-    for level in range(1, len(fg_vs.LADDER) + 1):
-        print(f"level {level}/{len(fg_vs.LADDER)}: {fg_vs.LADDER[level - 1]['label']}", flush=True)
-        levels.append(measure(level, engines))  # first request also builds + caches the engine
-        print(f"  {levels[-1]} fps", flush=True)
-    with open(os.path.join(engines, "READY"), "w") as f:
-        json.dump({"w": W, "h": H, "levels": levels}, f)
+def main(engines, width, height, levels=()):
+    levels = [int(x) for x in levels] or list(range(1, len(fg_vs.LADDER) + 1))
+    cal = fg_vs.read_cal(engines, width, height)
+    for level in levels:
+        if level in cal:
+            continue
+        print(f"{width}x{height} level {level}/{len(fg_vs.LADDER)}: {fg_vs.LADDER[level - 1]['label']}", flush=True)
+        cal[level] = measure(level, engines, width, height)
+        print(f"  {cal[level]} fps", flush=True)
+        fg_vs.write_cal(engines, width, height, cal)  # progress survives a crash in a later level
     print("done", flush=True)
+    return cal
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 4:
         sys.exit(__doc__)
-    main(sys.argv[1])
+    main(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4:])

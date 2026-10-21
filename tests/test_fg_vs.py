@@ -37,22 +37,25 @@ def test_source_fps_fallback():
     assert fg_vs.source_fps(None) is None
 
 
-def test_pad_amount():
-    assert fg_vs.pad_amount(1920, 1080) == (0, 72)
-    assert fg_vs.pad_amount(3840, 2160) == (0, 16)
-    assert fg_vs.pad_amount(1280, 720) == (0, 48)
-    assert fg_vs.pad_amount(1024, 768) == (0, 0)
-    w, h = 1918, 1038
-    pw, ph = fg_vs.pad_amount(w, h)
-    assert (w + pw) % 128 == 0 and (h + ph) % 128 == 0
-    assert 1080 + 72 <= 2176 and 2160 + 16 <= 2176  # padded 4K still fits the engine's max shape
+def test_padded_size():
+    # level 1/2: scale 1 -> multiple of 32; level 3: 64; level 4: 128
+    assert fg_vs.padded_size(1, 1920, 1080) == (1920, 1088)
+    assert fg_vs.padded_size(3, 1920, 1080) == (1920, 1088)
+    assert fg_vs.padded_size(4, 1920, 1080) == (1920, 1152)
+    assert fg_vs.padded_size(4, 3840, 2160) == (3840, 2176)
+    assert fg_vs.padded_size(1, 1280, 720) == (1280, 736)
+    assert fg_vs.padded_size(2, 1024, 768) == (1024, 768)
 
 
-def test_shape_profile_fits_padding():
-    for w, h in (fg_vs.MIN_SHAPE, fg_vs.OPT_SHAPE, fg_vs.MAX_SHAPE):
-        assert w % fg_vs.PAD == 0 and h % fg_vs.PAD == 0, (w, h)
-    pw, ph = fg_vs.pad_amount(1920, 1080)
-    assert (1920 + pw, 1080 + ph) == fg_vs.OPT_SHAPE
+def test_cal_roundtrip():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        assert fg_vs.read_cal(d, 1920, 1080) == {}
+        fg_vs.write_cal(d, 1920, 1080, {3: 105.0, 1: 42.6})
+        assert fg_vs.read_cal(d, 1920, 1080) == {1: 42.6, 3: 105.0}
+        with open(fg_vs.cal_path(d, 1920, 1080), "w") as f:
+            f.write("garbage")
+        assert fg_vs.read_cal(d, 1920, 1080) == {}
 
 
 def test_parse_params():

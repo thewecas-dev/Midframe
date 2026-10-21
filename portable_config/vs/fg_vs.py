@@ -68,34 +68,28 @@ def parse_params(user_data):
     return p
 
 
-# TensorRT shape profile (w, h). Every value must be a multiple of PAD: some RIFE models
-# (e.g. 4.25 lite) reject shapes that aren't, even for the "typical size" hint.
-MIN_SHAPE = (128, 128)
-OPT_SHAPE = (1920, 1152)   # padded 1080p
-MAX_SHAPE = (3840, 2176)   # padded 4K
-
-
-def backend(engines):
-    import vsmlrt
-    # ponytail: one dynamic-shape engine per model covers every resolution up to 4K;
-    # static per-resolution engines are a bit faster if the 4050 needs the headroom.
-    # num_streams=2 lets the GPU work on two frames at once (doesn't change the engine files).
-    return vsmlrt.Backend.TRT(fp16=True, static_shape=False, min_shapes=MIN_SHAPE,
-                              opt_shapes=OPT_SHAPE, max_shapes=MAX_SHAPE, engine_folder=engines,
-                              num_streams=2)
-
-
 # Installed layout: <app>/portable_config/vs/fg_vs.py and <app>/vs-runtime/vs-plugins/vstrt.dll
 PLUGINS = os.environ.get("FRAMEGEN_VS_PLUGINS", os.path.join(HERE, "..", "..", "vs-runtime", "vs-plugins"))
 
 
-# vsmlrt needs frame sizes divisible by 32/scale (64 for some models): 128 covers every ladder level.
-# ponytail: one pad size for all levels; per-level padding saves ~6% work at 1080p if it ever matters.
-PAD = 128
+def pad_multiple(level):
+    """RIFE needs frame sizes divisible by 32/scale (v1 network). The v2 network pads internally,
+    but padding to 32 anyway costs <1% and keeps one code path if vsmlrt falls back to v1."""
+    return int(round(32 / LADDER[level - 1]["scale"]))
 
 
-def pad_amount(width, height):
-    return -width % PAD, -height % PAD
+def padded_size(level, width, height):
+    m = pad_multiple(level)
+    return width + (-width % m), height + (-height % m)
+
+
+def backend(engines):
+    import vsmlrt
+    # Static shape = one engine per (model, frame size): fastest kernels, small file, quick to load on
+    # seek. fp16 in and out halves GPU<->CPU traffic. CUDA graphs cut launch overhead (vsmlrt default).
+    # ponytail: num_streams=2 keeps the GPU fed with a 2-deep queue; raise to 3 if util stays < 85%.
+    return vsmlrt.Backend.TRT(fp16=True, output_format=1, static_shape=True, use_cuda_graph=True,
+                              num_streams=2, engine_folder=engines)
 
 
 def rife(rgb, mult, level, engines):
@@ -105,11 +99,36 @@ def rife(rgb, mult, level, engines):
         vs.core.std.LoadPlugin(dll)
     import vsmlrt
     step = LADDER[level - 1]
-    pw, ph = pad_amount(rgb.width, rgb.height)
+    pw, ph = padded_size(level, rgb.width, rgb.height)
+    pw, ph = pw - rgb.width, ph - rgb.height
     padded = rgb.std.AddBorders(right=pw, bottom=ph) if pw or ph else rgb
     out = vsmlrt.RIFE(padded, multi=mult, scale=step["scale"], model=vsmlrt.RIFEModel(step["model"]),
-                      backend=backend(engines), video_player=True)
+                      backend=backend(engines), video_player=True, _implementation=step.get("impl"))
     return out.std.Crop(right=pw, bottom=ph) if pw or ph else out
+
+
+# --- Calibration files: <engines>/cal_<w>x<h>.json = {"levels": {"1": out_fps_at_2x | null, ...}}
+# A level with a number has a built engine for that frame size and was measured on this GPU.
+
+def cal_path(engines, width, height):
+    return os.path.join(engines, f"cal_{width}x{height}.json")
+
+
+def read_cal(engines, width, height):
+    try:
+        with open(cal_path(engines, width, height), encoding="utf-8") as f:
+            levels = json.load(f)["levels"]
+        return {int(k): v for k, v in levels.items() if v is not None}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+def write_cal(engines, width, height, levels):
+    os.makedirs(engines, exist_ok=True)
+    tmp = cal_path(engines, width, height) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"w": width, "h": height, "levels": {str(k): v for k, v in sorted(levels.items())}}, f)
+    os.replace(tmp, cal_path(engines, width, height))
 
 
 def build(video_in, container_fps, params):

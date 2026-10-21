@@ -62,14 +62,28 @@ function M.rife_per_s(tn, td, sn, sd)
     return tn / td * (1 - 1 / p)
 end
 
--- caps: calibrated output fps at 2x on cal_w x cal_h, one per RIFE level (fastest last).
--- Returns the best (lowest index) level fast enough for this video, else the fastest one.
-function M.start_level(caps, cal_w, cal_h, w, h, need_per_s)
-    local scale = (cal_w * cal_h) / (w * h)
-    for i, out_fps in ipairs(caps) do
-        if out_fps / 2 * scale >= need_per_s * M.HEADROOM then return i end
+-- Pick the best (lowest index) RIFE level that keeps up, from calibration measured on this GPU.
+--   exact: {level = out_fps_at_2x} measured at this frame size (may be partial or empty)
+--   ref:   {level = out_fps_at_2x} measured at ref_w x ref_h (scaled by pixel count as an estimate)
+-- Returns level, known (true when the pick comes from an exact measurement).
+-- A level nothing is known about is skipped: a wrong guess costs a multi-second reload plus drops.
+function M.start_level(exact, ref, ref_w, ref_h, w, h, need_per_s, total)
+    local scale = (ref_w and ref_h) and (ref_w * ref_h) / (w * h) or nil
+    local fallback
+    for i = 1, total do
+        local e = exact[i]
+        if e then
+            if e / 2 >= need_per_s * M.HEADROOM then return i, true end
+            fallback = i
+        elseif scale and ref[i] then
+            if ref[i] / 2 * scale >= need_per_s * M.HEADROOM then return i, false end
+            fallback = fallback or i
+        end
     end
-    return #caps
+    -- Nothing keeps up: the fastest measured level, else the fastest in the ladder.
+    local last
+    for i = total, 1, -1 do if exact[i] or (scale and ref[i]) then last = i; break end end
+    return last or total, exact[last or total] ~= nil
 end
 
 function M.tick(st, s, now)
