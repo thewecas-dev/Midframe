@@ -61,7 +61,18 @@ end
 
 local function quoted(s) return "%" .. #s .. "%" .. s end  -- mpv option quoting, safe for C:\ paths and JSON
 
-local function engines_ready() return utils.file_info(ENGINES .. "/READY") ~= nil end
+-- READY holds the per-level speeds measured on this GPU (written by build_engines.py).
+-- An old or unreadable READY counts as not ready, so the builder re-runs and re-measures.
+local function calibration()
+    if S.cal then return S.cal end
+    local f = io.open(ENGINES .. "/READY", "r")
+    if not f then return nil end
+    local t = utils.parse_json(f:read("*a") or "")
+    f:close()
+    if type(t) == "table" and type(t.levels) == "table" and #t.levels == #LADDER and t.w and t.h then S.cal = t end
+    return S.cal
+end
+local function engines_ready() return calibration() ~= nil end
 
 local function current()
     if not (S.auto and S.levels) then return nil end
@@ -155,7 +166,11 @@ local function retarget()
     end
     S.fps_steps = auto.fps_steps(tn, td, S.src_num, S.src_den)
     S.levels = auto.levels(#LADDER, S.fps_steps)
-    S.auto = auto.new(S.levels, mp.get_time())
+    local start, cal, vp = 1, calibration(), mp.get_property_native("video-params") or {}
+    if cal and vp.w then
+        start = auto.start_level(cal.levels, cal.w, cal.h, vp.w, vp.h, auto.rife_per_s(tn, td, S.src_num, S.src_den))
+    end
+    S.auto = auto.new(S.levels, mp.get_time(), start)
     apply()
 end
 

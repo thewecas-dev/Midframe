@@ -78,6 +78,18 @@ def test_passthrough_when_not_faster_or_unknown():
     assert fg_vs.build(video_in, 0.0, p) is video_in                                   # fps unknown
 
 
+def test_build_engines_writes_calibration():
+    import tempfile
+    import build_engines
+    sys.modules["vsmlrt"] = fake_vsmlrt(vs.RGBS)
+    with tempfile.TemporaryDirectory() as d:
+        build_engines.main(d)
+        with open(os.path.join(d, "READY")) as f:
+            cal = json.load(f)
+    assert (cal["w"], cal["h"]) == (1920, 1080)
+    assert len(cal["levels"]) == len(fg_vs.LADDER) and all(x > 0 for x in cal["levels"]), cal
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

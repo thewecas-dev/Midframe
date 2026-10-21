@@ -70,4 +70,20 @@ st = auto.new(lv, 0); st.level = 7
 acts = feed(st, W, 100, SLOW, {})
 eq(#acts, 0, "off terminal")
 
+-- test_rife_per_s: interpolated frames per second
+eq(auto.rife_per_s(48000, 1001, 24000, 1001), 48000 / 1001 / 2, "2x: half the output")
+eq(auto.rife_per_s(60, 1, 24, 1), 48, "2.5x: 60 out, 12 land on source")
+eq(auto.rife_per_s(60, 1, 30, 1), 30, "30 -> 60")
+
+-- test_start_level: the user's measured RTX 4050 numbers
+local caps = { 42.6, 26.1, 105.0, 120.9 }
+eq(auto.start_level(caps, 1920, 1080, 1920, 1080, 24), 3, "1080p 24->48 starts at 4.6 half")
+eq(auto.start_level(caps, 1920, 1080, 1280, 720, 24), 1, "720p 24->48 fits 4.26 full")
+eq(auto.start_level(caps, 1920, 1080, 3840, 2160, 30), 4, "4K: nothing fits, fastest level")
+
+-- test_new_blocks_slower_levels
+st = auto.new(lv, 0, 3)
+eq(st.level, 3); assert(st.blocked[1] and st.blocked[2] and not st.blocked[3], "above start blocked")
+eq(#feed(st, W, W + 120, GOOD, {}), 0, "never steps up into known-slow levels")
+
 print("test_auto ok")

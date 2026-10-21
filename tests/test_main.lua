@@ -1,7 +1,15 @@
 -- Loads main.lua against a recording stub of mpv's Lua API.
 local function eq(a, b, msg) assert(a == b, (msg or "") .. ": expected " .. tostring(b) .. ", got " .. tostring(a)) end
 
+local READY = "portable_config/engines/READY"
 local function make_env(files)
+    os.remove(READY)
+    if files[READY] then
+        os.execute("mkdir -p portable_config/engines")
+        local f = assert(io.open(READY, "w"))
+        f:write(files[READY].content or '{"w":1920,"h":1080,"levels":[400,300,200,100]}')
+        f:close()
+    end
     local E = { cmds = {}, async = {}, osd = {}, events = {}, observers = {}, bindings = {}, messages = {}, props = {},
         forced = {}, set = {} }
     local function json(v)
@@ -48,7 +56,15 @@ local function make_env(files)
     package.loaded["mp.utils"] = {
         file_info = function(p) return files[p] end,
         format_json = json,
-        parse_json = function() return { { label = "L1" }, { label = "L2" }, { label = "L3" }, { label = "L4" } } end,
+        parse_json = function(str)
+            if str:find('"levels"') then  -- READY written by build_engines.py
+                local caps = {}
+                for n in str:match("%[(.-)%]"):gmatch("[%d%.]+") do caps[#caps + 1] = tonumber(n) end
+                return { w = 1920, h = 1080, levels = caps }
+            end
+            if str == "ok" then return nil end  -- old-style READY
+            return { { label = "L1" }, { label = "L2" }, { label = "L3" }, { label = "L4" } }
+        end,
     }
     package.loaded["mp.msg"] = { info = function() end, warn = function() end, error = function() end }
     package.loaded["mp.options"] = { read_options = function() end }
@@ -160,4 +176,17 @@ local n = #E.cmds
 E.observers["container-fps"]()
 eq(#E.cmds, n, "same fps again changes nothing")
 
+-- test_start_level_from_calibration: slow GPU starts 1080p at the level that keeps up
+E = make_env({ [READY] = { content = '{"w":1920,"h":1080,"levels":[42.6,26.1,105.0,120.9]}' } })
+E.props["container-fps"] = 23.976
+E.props["display-fps"] = 144
+E.props["video-params"] = VP
+E.observers["video-params"]()
+assert(last_vf(E):find('"level":3'), "starts at calibrated level 3: " .. last_vf(E))
+
+-- test_old_ready_rebuilds: a pre-calibration READY ("ok") triggers the builder
+E = make_env({ [READY] = { content = "ok" } })
+eq(#E.async, 1, "old READY -> re-measure")
+
+os.remove(READY)
 print("test_main ok")

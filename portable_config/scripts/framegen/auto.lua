@@ -40,10 +40,36 @@ end
 -- After a seek the filter reloads; give it a fresh warm-up without changing level.
 M.rewarm = changed
 
-function M.new(levels, now)
-    local st = { levels = levels, level = 1, blocked = {} }
+-- start: first level to try. Levels above it are blocked: calibration already showed they're too slow,
+-- and every failed try costs a multi-second filter reload.
+function M.new(levels, now, start)
+    local st = { levels = levels, level = start or 1, blocked = {} }
+    for i = 1, st.level - 1 do st.blocked[i] = true end
     changed(st, now)
     return st
+end
+
+M.HEADROOM = 1.2  -- calibrated speed must beat the need by 20% (real video, decoding, other apps)
+
+local function gcd(a, b)
+    while b ~= 0 do a, b = b, a % b end
+    return a
+end
+
+-- RIFE-generated frames per second for src -> target: output frames that don't land on a source frame.
+function M.rife_per_s(tn, td, sn, sd)
+    local p = (tn * sd) / gcd(tn * sd, td * sn)  -- numerator of the reduced target/src ratio
+    return tn / td * (1 - 1 / p)
+end
+
+-- caps: calibrated output fps at 2x on cal_w x cal_h, one per RIFE level (fastest last).
+-- Returns the best (lowest index) level fast enough for this video, else the fastest one.
+function M.start_level(caps, cal_w, cal_h, w, h, need_per_s)
+    local scale = (cal_w * cal_h) / (w * h)
+    for i, out_fps in ipairs(caps) do
+        if out_fps / 2 * scale >= need_per_s * M.HEADROOM then return i end
+    end
+    return #caps
 end
 
 function M.tick(st, s, now)
