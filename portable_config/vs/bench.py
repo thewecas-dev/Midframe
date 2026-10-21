@@ -1,9 +1,9 @@
-"""Measure where FrameGen's time goes, outside mpv. Run with FrameGen's bundled Python:
+"""Measure where Tween's time goes, outside mpv. Run with the bundled Python, from the install folder:
 
-    D:\\FrameGen\\vs-runtime\\python.exe D:\\FrameGen\\portable_config\\vs\\bench.py [width height]
+    vs-runtime\\python.exe portable_config\\vs\\bench.py [width height]
 
 Prints frames/second for: colour conversion only, raw RIFE per level (also recorded as calibration),
-and the full FrameGen filter per level. Default 1080p, 23.976 -> 47.952 fps (2x): real time needs >= 48.
+and the full Tween filter per level. Default 1080p, 23.976 -> 47.952 fps (2x): real time needs >= 48.
 """
 import json
 import os
@@ -49,7 +49,7 @@ def main(w=1920, h=1080):
     for level in sorted(cal):
         params = fg_vs.parse_params(json.dumps({"num": 48000, "den": 1001, "level": level, "anime": True,
                                                 "engines": ENGINES, "matrix": "709", "range": "limited"}))
-        measure(f"FrameGen   L{level} {fg_vs.LADDER[level - 1]['label']}", fg_vs.build(src, 24000 / 1001, params))
+        measure(f"Tween      L{level} {fg_vs.LADDER[level - 1]['label']}", fg_vs.build(src, 24000 / 1001, params))
 
 
 if __name__ == "__main__":

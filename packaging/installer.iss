@@ -4,12 +4,16 @@
 #endif
 
 [Setup]
-AppName=FrameGen
-AppVersion=0.1.0
-DefaultDirName={localappdata}\FrameGen
+AppName=Tween
+AppVersion=0.2.0
+AppPublisher=Tween contributors
+AppPublisherURL=https://github.com/REPLACE_ME/tween
+DefaultDirName={localappdata}\Tween
+SetupIconFile={#AppDir}\icon.ico
+UninstallDisplayIcon={app}\icon.ico
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
-OutputBaseFilename=FrameGen-Setup
+OutputBaseFilename=Tween-Setup
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2/fast
@@ -24,8 +28,8 @@ Name: desktopicon; Description: "Create a desktop shortcut"
 Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\FrameGen"; Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\launch.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\mpv.exe"
-Name: "{autodesktop}\FrameGen"; Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\launch.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\mpv.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Tween"; Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\launch.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
+Name: "{autodesktop}\Tween"; Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\launch.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\portable_config\engines"

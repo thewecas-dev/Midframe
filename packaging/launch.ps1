@@ -1,4 +1,4 @@
-# Starts FrameGen (mpv). If mpv crashes, reopens the same file at the same spot with
+# Starts Tween (mpv). If mpv crashes, reopens the same file at the same spot with
 # interpolation off (at most twice per session). Startup errors go to launch-error.log + a message box,
 # since the shortcut runs this script with a hidden window.
 param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $Files = @())
@@ -8,7 +8,7 @@ $app = $PSScriptRoot
 trap {
     $_ | Out-String | Set-Content "$app\launch-error.log"
     Add-Type -AssemblyName PresentationFramework
-    [System.Windows.MessageBox]::Show("FrameGen could not start:`n`n$_`n`nDetails: $app\launch-error.log", "FrameGen") | Out-Null
+    [System.Windows.MessageBox]::Show("Tween could not start:`n`n$_`n`nDetails: $app\launch-error.log", "Tween") | Out-Null
     exit 1
 }
 

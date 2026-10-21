@@ -1,4 +1,4 @@
--- FrameGen: wires RIFE interpolation (vs/rife.vpy) into mpv with before-playback prompts
+-- Tween (script id "framegen"): wires RIFE interpolation (vs/rife.vpy) into mpv with before-playback prompts
 -- (YouTube quality, frame rate), per-resolution TensorRT engines built on demand, auto step-down,
 -- failure fallback, crash-resume state, start screen, notices and a debug overlay.
 local mp = require "mp"

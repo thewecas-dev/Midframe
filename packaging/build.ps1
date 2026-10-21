@@ -1,4 +1,4 @@
-# Builds dist\FrameGen-Setup.exe on Windows. From the repo root:
+# Builds dist\Tween-Setup.exe on Windows. From the repo root:
 #   powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 # Needs 7-Zip (7z.exe) and Inno Setup 6 (iscc.exe) on PATH, and ~10 GB free disk.
 $ErrorActionPreference = "Stop"
@@ -77,8 +77,9 @@ Move-Item $vsmlrtPy.FullName "$app\portable_config\vs\vsmlrt.py"
 Expand-Archive (Get-File "$gh/tomasklaen/uosc/releases/download/$UOSC_TAG/uosc.zip") "$app\portable_config" -Force
 Copy-Item (Get-File "$gh/yt-dlp/yt-dlp/releases/download/$YTDLP_TAG/yt-dlp.exe") "$app\yt-dlp.exe"
 Copy-Item "$PSScriptRoot\launch.ps1" "$app\launch.ps1"
+Copy-Item "$PSScriptRoot\icon.ico" "$app\icon.ico"
 
 # Installer
 & iscc "/DAppDir=$app" "/O$root\dist" "$PSScriptRoot\installer.iss"
 if ($LASTEXITCODE) { throw "Inno Setup failed" }
-Write-Host "Done: $root\dist\FrameGen-Setup.exe" -ForegroundColor Green
+Write-Host "Done: $root\dist\Tween-Setup.exe" -ForegroundColor Green
