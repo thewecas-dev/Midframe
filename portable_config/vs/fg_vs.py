@@ -79,14 +79,26 @@ def backend(engines):
 PLUGINS = os.environ.get("FRAMEGEN_VS_PLUGINS", os.path.join(HERE, "..", "..", "vs-runtime", "vs-plugins"))
 
 
+# vsmlrt needs frame sizes divisible by 32/scale (64 for some models): 128 covers every ladder level.
+# ponytail: one pad size for all levels; per-level padding saves ~6% work at 1080p if it ever matters.
+PAD = 128
+
+
+def pad_amount(width, height):
+    return -width % PAD, -height % PAD
+
+
 def rife(rgb, mult, level, engines):
     import vapoursynth as vs
     if not hasattr(vs.core, "trt"):
         vs.core.std.LoadPlugin(os.path.join(PLUGINS, "vstrt.dll"))
     import vsmlrt
     step = LADDER[level - 1]
-    return vsmlrt.RIFE(rgb, multi=mult, scale=step["scale"], model=vsmlrt.RIFEModel(step["model"]),
-                       backend=backend(engines), video_player=True)
+    pw, ph = pad_amount(rgb.width, rgb.height)
+    padded = rgb.std.AddBorders(right=pw, bottom=ph) if pw or ph else rgb
+    out = vsmlrt.RIFE(padded, multi=mult, scale=step["scale"], model=vsmlrt.RIFEModel(step["model"]),
+                      backend=backend(engines), video_player=True)
+    return out.std.Crop(right=pw, bottom=ph) if pw or ph else out
 
 
 def build(video_in, container_fps, params):

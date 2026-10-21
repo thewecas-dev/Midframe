@@ -37,6 +37,17 @@ def test_source_fps_fallback():
     assert fg_vs.source_fps(None) == F(30000, 1001)
 
 
+def test_pad_amount():
+    assert fg_vs.pad_amount(1920, 1080) == (0, 72)
+    assert fg_vs.pad_amount(3840, 2160) == (0, 16)
+    assert fg_vs.pad_amount(1280, 720) == (0, 48)
+    assert fg_vs.pad_amount(1024, 768) == (0, 0)
+    w, h = 1918, 1038
+    pw, ph = fg_vs.pad_amount(w, h)
+    assert (w + pw) % 128 == 0 and (h + ph) % 128 == 0
+    assert 1080 + 72 <= 2176 and 2160 + 16 <= 2176  # padded 4K still fits the engine's max shape
+
+
 def test_parse_params():
     good = {"num": 60000, "den": 1001, "level": 1, "anime": True, "engines": "C:/e",
             "matrix": "709", "range": "limited"}
