@@ -280,9 +280,17 @@ E.messages["prompt-event"]('{"type":"close"}')
 eq(hook.continued, 2, "loading continues after the fps prompt")
 play(E, VP, 29.97)
 assert(last_vf(E):find('"num":60,'), "chosen fps used: " .. last_vf(E))
--- same URL reloaded (quality switch from uosc): no prompts again
+-- same URL reloaded right away (quality switch from uosc): no prompts again
+E.events["end-file"]()
 E.hooks["on_load"](hook); E.hooks["on_preloaded"](hook)
 eq(hook.deferred, 2, "no re-prompt on reload")
+-- the same URL opened again much later: ask again
+local real_time = package.loaded["mp"].get_time
+package.loaded["mp"].get_time = function() return 100 end
+E.hooks["on_load"](hook)
+eq(hook.deferred, 3, "re-prompt after a while")
+package.loaded["mp"].get_time = real_time
+E.messages["prompt-event"]('{"type":"close"}')
 
 -- test_local_prompts_fps_only, and Escape keeps the previous choice
 E = make_env({ cal = { ["1920x1080"] = FULL } })

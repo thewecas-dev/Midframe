@@ -253,6 +253,7 @@ end
 mp.observe_property("video-params", "native", try_setup)
 mp.observe_property("container-fps", "number", try_setup)
 mp.register_event("end-file", function()
+    S.ended_at = mp.get_time()
     remove()
     S.src_num, S.w, S.h, S.levels, S.auto = nil, nil, nil, nil, nil
     S.enabled = o.enabled  -- a failure only disables interpolation for the file it happened on
@@ -453,7 +454,8 @@ local function asking() return o.ask and S.uosc end
 mp.add_hook("on_load", 5, function(hook)
     local path = mp.get_property("path")
     if not (asking() and is_url(path)) then return end
-    if path == S.last_url then return end  -- same URL reloading (quality switch): keep the answers
+    -- The same URL reloading right away is a quality switch from uosc's menu: keep the answers.
+    if path == S.last_url and mp.get_time() - (S.ended_at or -1e9) < 15 then return end
     S.last_url = path
     hook:defer()
     local items = {}
@@ -475,7 +477,7 @@ end)
 mp.add_hook("on_preloaded", 50, function(hook)
     if not asking() then return end
     local path = mp.get_property("path")
-    if is_url(path) and S.last_fps_url == path then return end
+    if is_url(path) and S.last_fps_url == path and mp.get_time() - (S.ended_at or -1e9) < 15 then return end
     local track
     for _, t in ipairs(mp.get_property_native("track-list") or {}) do
         if t.type == "video" and (not track or t.selected) then track = t end
