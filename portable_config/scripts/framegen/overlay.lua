@@ -98,6 +98,9 @@ end
 -- Top-center notice pill. kind: "info" | "warn" | "good" | "bad".
 function M.toast(w, txt, kind)
     local fs, h = 16, 40
+    txt = txt:gsub("[%c]", " ")  -- stray \r etc. render as boxes
+    local max = math.floor((w - 120) / (fs * 0.54))
+    if ulen(txt) > max then txt = txt:sub(1, max - 1):gsub("[\192-\255][\128-\191]*$", "") .. "…" end
     local tw = math.floor(ulen(txt) * fs * 0.54 + 52)
     local x, y = math.floor((w - tw) / 2), 24
     local dot = ({ info = C.accent, warn = C.warn, good = C.good, bad = C.bad })[kind] or C.accent

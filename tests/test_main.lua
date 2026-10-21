@@ -125,6 +125,8 @@ assert(menu and menu:find('"title":"Frame rate"'), menu)
 assert(menu:find('"title":"Multiply"') and menu:find('"title":"Fixed"'), "sections")
 assert(menu:find('"title":"Custom…"') and menu:find('"title":"Interpolation"'), "custom + toggle")
 assert(menu:find('"active":true'), "current choice marked")
+assert(not menu:find('"hint":"60 fps"', 1, true), "fixed items have no duplicate hint")
+assert(menu:find('"hint":"L1"', 1, true), "toggle shows running model")
 
 -- test_idle_click: start screen buttons route to uosc
 E = make_env({ ["portable_config/engines/READY"] = { is_file = true } })

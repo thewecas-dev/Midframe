@@ -116,7 +116,7 @@ local function prepare()
             notice("RIFE ready", 3, "good")
             apply()
         else
-            local err = (res and res.stderr or ""):match("([^\n]+)\n*$") or "unknown error"
+            local err = ((res and res.stderr or ""):match("([^\n]*%S)%s*$") or "unknown error"):gsub("%s+$", "")
             msg.error("engine build failed: " .. ((res and res.stderr) or ""))
             notice("RIFE setup failed: " .. err, 8, "bad")
         end
@@ -286,18 +286,18 @@ mp.add_key_binding("F", "fps-menu", function()
         local t = op.num / op.den
         items[#items + 1] = {
             title = is_fixed and (op.choice .. " fps") or (op.choice:sub(2) .. "×"),
-            hint = is_fixed and (math.abs(t - cap) < 0.5 and "matches display" or nil) or (fps.fmt(t) .. " fps"),
+            hint = (not is_fixed and fps.fmt(t) .. " fps") or (math.abs(t - cap) < 0.5 and "matches display") or nil,
             value = { "script-message-to", "framegen", "set-fps", op.choice },
             active = S.enabled and op.choice == S.choice or nil,
         }
     end
     items[#items].separator = true
     items[#items + 1] = { title = "Custom…", hint = "type a value", value = "script-message-to framegen fps-custom" }
-    local lv = current()
+    local t, lv = target()
     items[#items + 1] = {
         title = "Interpolation", value = "script-message-to framegen toggle",
         icon = S.enabled and "toggle_on" or "toggle_off",
-        hint = S.enabled and (lv and not lv.off and LADDER[lv.rife].label or "on") or "off",
+        hint = (not S.enabled and "off") or (t and LADDER[lv.rife].label) or "on · not running",
     }
     mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json({
         type = "framegen_fps", title = "Frame rate", items = items, search_style = "disabled",

@@ -45,4 +45,10 @@ assert(boxes.open[3] < boxes.paste[1], "open left of paste")
 assert(not overlay.hit(nil, 1, 1), "nil box")
 assert(select(1, overlay.idle(1440, 810, "building")):find("Preparing RIFE", 1, true))
 
+-- control characters are dropped and long messages are cut to fit
+t = overlay.toast(600, "line\r", "bad")
+assert(not t:find("\r", 1, true), "no CR")
+t = overlay.toast(600, string.rep("x", 400), "bad")
+assert(#t < 1200 and t:find("…", 1, true), "truncated")
+
 print("test_overlay ok")
