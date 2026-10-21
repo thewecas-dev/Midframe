@@ -87,10 +87,10 @@ def backend(engines):
     import vsmlrt
     # Static shape = one engine per (model, frame size): fastest kernels, small file, quick to load on
     # seek. fp16 in and out halves GPU<->CPU traffic. CUDA graphs cut launch overhead (vsmlrt default).
-    # One stream and 4 frames in flight (mpv side): a deep CUDA queue starves mpv's own renderer on the
-    # same GPU (render time spikes to 9-12 ms and frames miss their vsync) long before RIFE runs out of speed.
+    # Measured on the RTX 4050: 2 streams + 8 frames in flight (mpv side) plays 1080p 2x flat; 1 stream + 4
+    # in flight made 1400 frames late in a minute (mpv's buffer is buffered-frames x concurrent-frames).
     return vsmlrt.Backend.TRT(fp16=True, output_format=1, static_shape=True, use_cuda_graph=True,
-                              num_streams=1, engine_folder=engines)
+                              num_streams=2, engine_folder=engines)
 
 
 def rife(rgb, mult, level, engines):
