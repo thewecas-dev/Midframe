@@ -27,6 +27,9 @@ Design: `docs/specs/2026-10-21-framegen-design.md` · Plan: `docs/plans/2026-10-
   1. Settings → System → Display → Graphics → Add desktop app → `mpv.exe` from the install folder → Options → **High performance**.
   2. NVIDIA Control Panel → Manage 3D settings → Program Settings → add `mpv.exe` → **Power management mode: Prefer maximum performance**.
   3. Windows power mode (Settings → System → Power) set to **Best performance** while watching.
+- Use a fixed refresh rate: Settings → System → Display → Advanced display → refresh rate **144 Hz**, not
+  "Dynamic", and turn off G-SYNC in the NVIDIA Control Panel. mpv paces frames against a fixed rate; the debug
+  overlay's "measured" display rate shows when the panel is changing rate under it.
 
 ## How a level is picked
 

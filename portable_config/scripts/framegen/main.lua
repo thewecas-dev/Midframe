@@ -509,6 +509,7 @@ local function draw()
         target_fps = t,
         real_fps = S.real_fps,
         display_fps = mp.get_property_number("display-fps"),
+        measured_display_fps = mp.get_property_number("estimated-display-fps"),
         level_label = lv and LADDER[lv.rife].label or "interpolation off",
         backend = "TensorRT",
         auto_level = S.auto and S.auto.level, auto_total = S.levels and #S.levels,

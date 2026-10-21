@@ -37,9 +37,10 @@ local GRAPHS = {
 function M.render(st)
     local h = st.hist
     local rows = {
-        string.format("src %s @ %s → target %s | real %s | display %s", q(st.src_res),
+        -- measured display rate far from the nominal one = variable refresh (Windows "Dynamic" rate or G-SYNC)
+        string.format("src %s @ %s → target %s | real %s | display %s Hz (measured %s)", q(st.src_res),
             st.src_fps and string.format("%.3f", st.src_fps) or "?", q(st.target_fps, "%.3f"),
-            q(st.real_fps, "%.1f"), q(st.display_fps, "%.0f")),
+            q(st.real_fps, "%.1f"), q(st.display_fps, "%.0f"), q(st.measured_display_fps, "%.1f")),
         string.format("%s · %s · level %s/%s", q(st.level_label), q(st.backend), q(st.auto_level), q(st.auto_total)),
         string.format("dropped %s · late %s · VRAM %s MB · seek %s ms", q(st.drops), q(st.delayed), q(st.vram_mb),
             q(st.seek_ms)),
