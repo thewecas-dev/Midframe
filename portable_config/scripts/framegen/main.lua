@@ -182,15 +182,23 @@ mp.register_script_message("uosc-version", sync_ui)  -- uosc (re)loaded: re-send
 
 -- Any filter error: turn interpolation off, keep playing.
 mp.enable_messages("error")
+local ERROR_LOG = expand("~~/framegen-error.log")
 mp.register_event("log-message", function(e)
-    if not S.added then return end
     local p, t = e.prefix or "", e.text or ""
-    if p:find("vapoursynth") or t:find("vapoursynth") or t:find("Disabling filter") or t:find("Python exception") then
+    -- Keep the whole traceback (mpv logs it line by line) for a few seconds after a filter failure.
+    if S.added or (S.fail_until and mp.get_time() < S.fail_until) then
+        local f = io.open(ERROR_LOG, "a")
+        if f then f:write("[", p, "] ", t, t:sub(-1) == "\n" and "" or "\n"); f:close() end
+    end
+    if not S.added then return end
+    if p:find("vapoursynth") or t:find("vapoursynth") or t:find("Disabling filter") or t:find("Python exception")
+        or t:find("Script evaluation failed") then
+        S.fail_until = mp.get_time() + 3
         S.enabled = false
         remove()
         sync_ui()
         local line = t:gsub("%s+$", "")
-        notice("Interpolation turned off: " .. line, 6, "bad")
+        notice("Interpolation turned off: " .. line .. " (details: portable_config\\framegen-error.log)", 8, "bad")
         msg.warn("interpolation disabled after: " .. line)
     end
 end)

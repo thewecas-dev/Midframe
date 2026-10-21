@@ -3,3 +3,5 @@ build/
 *.engine
 __pycache__/
 .DS_Store
+portable_config/framegen-error.log
+portable_config/framegen-last.json

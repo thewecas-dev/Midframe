@@ -22,11 +22,11 @@ def test_source_pos():
 
 
 def test_should_hold():
-    assert fg_vs.should_hold(F(0), False, 0.5, False)
-    assert fg_vs.should_hold(F(1, 2), True, 0.5, False)
-    assert fg_vs.should_hold(F(1, 2), False, 0.001, True)
-    assert not fg_vs.should_hold(F(1, 2), False, 0.001, False)
-    assert not fg_vs.should_hold(F(1, 2), False, 0.05, True)
+    assert fg_vs.should_hold(F(0), 0.05, False)          # on a source frame
+    assert fg_vs.should_hold(F(1, 2), 0.3, False)        # scene cut
+    assert fg_vs.should_hold(F(1, 2), 0.001, True)       # held anime drawing
+    assert not fg_vs.should_hold(F(1, 2), 0.001, False)  # static live-action still interpolates
+    assert not fg_vs.should_hold(F(1, 2), 0.05, True)    # normal motion
 
 
 def test_source_fps_fallback():

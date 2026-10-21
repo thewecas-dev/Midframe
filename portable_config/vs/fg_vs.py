@@ -12,7 +12,7 @@ with open(os.path.join(HERE, "ladder.json"), encoding="utf-8") as _f:
     LADDER = json.load(_f)
 
 DUP_THRESHOLD = 0.0015    # luma PlaneStatsDiff below this = same anime drawing held
-SCENE_THRESHOLD = 0.12    # misc.SCDetect threshold
+SCENE_THRESHOLD = 0.12    # luma PlaneStatsDiff above this = hard scene cut
 MAX_SRC_FRAMES = 8_000_000  # video_in reports a bogus huge length; ~92h at 24fps
 MATRICES = {"709", "470bg", "170m", "2020ncl"}
 RANGES = {"limited", "full"}
@@ -41,8 +41,9 @@ def source_pos(i, mult):
     return n, t - n
 
 
-def should_hold(frac, scene_next, diff, anime):
-    return frac == 0 or bool(scene_next) or (anime and diff < DUP_THRESHOLD)
+def should_hold(frac, diff, anime):
+    """Show the source frame instead of a RIFE frame: on-source, across a scene cut, or a held anime drawing."""
+    return frac == 0 or diff > SCENE_THRESHOLD or (anime and diff < DUP_THRESHOLD)
 
 
 def parse_params(user_data):
@@ -123,11 +124,10 @@ def build(video_in, container_fps, params):
     rgb = core.resize.Bicubic(clip, format=vs.RGBH, matrix_in_s=params["matrix"], range_in_s=params["range"])
     interp = rife(rgb, mult, params["level"], params["engines"])
 
-    # Tiny luma clip for scene-cut and duplicate-drawing detection.
+    # Tiny luma clip; PlaneStatsDiff(n, n+1) drives both scene-cut and duplicate-drawing detection.
     small = core.resize.Bilinear(clip, max(clip.width // 8 // 2 * 2, 16), max(clip.height // 8 // 2 * 2, 16),
                                  format=vs.GRAY8)
-    det = core.misc.SCDetect(small, threshold=SCENE_THRESHOLD)
-    det = core.std.PlaneStats(det, det[1:])
+    det = core.std.PlaneStats(small, small[1:])
 
     out_len = interp.num_frames
     det_out = core.std.FrameEval(core.std.BlankClip(det, length=out_len, keep=True),
@@ -135,7 +135,7 @@ def build(video_in, container_fps, params):
 
     def select(n, f):
         k, frac = source_pos(n, mult)
-        if should_hold(frac, f.props.get("_SceneChangeNext", 0), f.props.get("PlaneStatsDiff", 1.0), anime):
+        if should_hold(frac, f.props.get("PlaneStatsDiff", 0.05), anime):
             return rgb[k]  # held frames never touch the GPU: VapourSynth is lazy
         return interp
 
