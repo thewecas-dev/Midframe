@@ -4,6 +4,7 @@
 A Windows video player that generates the missing frames in real time, on your NVIDIA GPU.</p>
 
 <p align="center">
+<a href="#why-midframe-exists">Why</a> ·
 <a href="#install">Install</a> ·
 <a href="#features">Features</a> ·
 <a href="#use">Use</a> ·
@@ -16,6 +17,17 @@ A Windows video player that generates the missing frames in real time, on your N
 Films are shot at 24 frames per second. Your monitor can show 144. Midframe fills the gap: every frame in between
 is generated live by [RIFE](https://github.com/hzwer/ECCV2022-RIFE), an AI interpolation model, running on TensorRT
 while you watch. No downloading, no re-encoding, no waiting. Open a file or paste a YouTube link and press play.
+
+## Why Midframe exists
+
+Smooth, interpolated playback on Windows has mostly meant one thing: SVP, a mature and capable product, but a
+paid one. The free tools around it work differently. Flowframes, RIFE-App and friends are converters: you hand
+them a file, wait, and get a new, larger file back. That's ideal for archiving, but it doesn't help with the video you
+want to watch right now, or with a YouTube link.
+
+Midframe fills that gap. It's a free, open-source player that interpolates on demand, while you watch, for local
+files and streams alike. Nothing is written to disk and there's nothing to wait for. If you have an RTX card and a
+high-refresh display, this is the missing piece.
 
 Tested on an RTX 4050 Laptop (6 GB): 1080p at 2× and 3× and YouTube 1080p 30→60 play with **zero dropped frames**.
 
