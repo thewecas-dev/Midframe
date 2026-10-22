@@ -2,7 +2,7 @@
 local function eq(a, b, msg) assert(a == b, (msg or "") .. ": expected " .. tostring(b) .. ", got " .. tostring(a)) end
 
 local ENGINES = "portable_config/engines"
-local PREFS = "portable_config/framegen-prefs.json"
+local PREFS = "portable_config/midframe-prefs.json"
 local UOSC = "portable_config/scripts/uosc/main.lua"
 
 -- Minimal JSON decoder (objects, arrays, strings, numbers, true/false/null) for the stub.
@@ -111,7 +111,7 @@ local function make_env(opts)
         get_property = function(p) return E.props[p] end,
         set_property = function(p, v) E.set[p] = v end,
         set_property_native = function(p, v) E.set[p] = v end,
-        get_script_name = function() return "framegen" end,
+        get_script_name = function() return "midframe" end,
         get_time = function() return 0 end,
         register_event = function(n, f) E.events[n] = f end,
         observe_property = function(n, _, f) E.observers[n] = f end,
@@ -144,7 +144,7 @@ local function make_env(opts)
     package.loaded["mp.msg"] = { info = function() end, warn = function() end, error = function() end }
     package.loaded["mp.options"] = { read_options = function() end }
     package.loaded["mp.input"] = { select = function() end, get = function() end, terminate = function() end }
-    dofile("portable_config/scripts/framegen/main.lua")
+    dofile("portable_config/scripts/midframe/main.lua")
     return E
 end
 
@@ -182,7 +182,7 @@ assert(last_osd(E):find("Preparing RIFE", 1, true), "idle screen shows building"
 write(ENGINES .. "/cal_1920x1080.json", json({ w = 1920, h = 1080, levels = FULL }))
 E.messages["set-fps"]("60")
 eq(last_vf(E), nil, "no filter while the reference build runs")
-assert(E.set["user-data/framegen/status"]:find("preparing RIFE", 1, true), E.set["user-data/framegen/status"])
+assert(E.set["user-data/midframe/status"]:find("preparing RIFE", 1, true), E.set["user-data/midframe/status"])
 E.async[1].cb(true, { status = 0 })
 assert(last_vf(E) and last_vf(E):find('"num":60,'), "interpolation starts once the build is done")
 assert(last_osd(E):find("RIFE ready", 1, true), last_osd(E))
@@ -192,7 +192,7 @@ E = make_env({ cal = { ["1920x1080"] = FULL } })
 eq(#E.async, 0, "calibrated: nothing to build")
 play(E, VP, 23.976)
 local vf = last_vf(E)
-assert(vf:find("^vf add @framegen:vapoursynth=file=%%%d+%%"), vf)
+assert(vf:find("^vf add @midframe:vapoursynth=file=%%%d+%%"), vf)
 local n, js = vf:match("user%-data=%%(%d+)%%(.*)$")
 eq(tonumber(n), #js, "user-data length prefix")
 assert(js:find('"num":48000') and js:find('"den":1001') and js:find('"level":1'), js)
@@ -207,7 +207,7 @@ assert(io.open(PREFS):read("*a"):find('"choice":"60"'), "last choice saved")
 
 -- test_failure_disables
 E.events["log-message"]({ prefix = "vapoursynth", level = "error", text = "TensorRT: out of memory\n" })
-eq(last_vf(E), "vf remove @framegen", "filter removed")
+eq(last_vf(E), "vf remove @midframe", "filter removed")
 assert(last_osd(E):find("Interpolation turned off: TensorRT: out of memory", 1, true), last_osd(E))
 local before = #E.cmds
 E.events["log-message"]({ prefix = "vapoursynth", level = "error", text = "again" })
@@ -222,8 +222,8 @@ assert(last_vf(E):find('"matrix":"2020ncl"'), last_vf(E))
 E = make_env({ cal = { ["1920x1080"] = RTX4050 } })
 play(E, VP, 23.976)
 assert(last_vf(E):find('"level":3'), "starts at level 3: " .. last_vf(E))
-assert(last_cmd(E, "set%-button framegen_fps"):find('"badge":"48"'), "fps button shows 48")
-eq(E.set["user-data/framegen/status"], "1920×1080 · 23.976 fps → 47.952 fps · RIFE 4.6 half", "status line")
+assert(last_cmd(E, "set%-button midframe_fps"):find('"badge":"48"'), "fps button shows 48")
+eq(E.set["user-data/midframe/status"], "1920×1080 · 23.976 fps → 47.952 fps · RIFE 4.6 half", "status line")
 
 -- test_new_size_builds_on_demand: 720p has no engines yet -> build the estimated level only, play plain
 E = make_env({ cal = { ["1920x1080"] = RTX4050 } })
@@ -232,7 +232,7 @@ eq(last_vf(E), nil, "no filter without an engine")
 eq(#E.async, 1, "one on-demand build")
 eq(build_args(E, 1), ENGINES .. " 1280 720 1", "720p fits level 1 by estimate")
 assert(last_osd(E):find("Preparing RIFE 4.26 for 1280×720", 1, true), last_osd(E))
-assert(E.set["user-data/framegen/status"]:find("preparing RIFE 4.26", 1, true), E.set["user-data/framegen/status"])
+assert(E.set["user-data/midframe/status"]:find("preparing RIFE 4.26", 1, true), E.set["user-data/midframe/status"])
 write(ENGINES .. "/cal_1280x720.json", json({ w = 1280, h = 720, levels = { ["1"] = 90 } }))
 E.async[1].cb(true, { status = 0 })
 assert(last_vf(E) and last_vf(E):find('"level":1'), "filter added once the engine exists")
@@ -270,9 +270,9 @@ E.hooks["on_load"](hook)
 eq(hook.deferred, 1, "loading paused for the quality prompt")
 menu = last_cmd(E, "open%-menu")
 assert(menu:find('"title":"Video quality"') and menu:find('"title":"1080p"') and menu:find('"value":"q:1080"'), menu)
-assert(menu:find('"callback":%["framegen","prompt%-event"%]'), "callback mode")
+assert(menu:find('"callback":%["midframe","prompt%-event"%]'), "callback mode")
 E.messages["prompt-event"]('{"type":"activate","value":"q:1080","index":4}')
-eq(last_cmd(E, "close%-menu"), "script-message-to uosc close-menu framegen_prompt", "menu closed by us")
+eq(last_cmd(E, "close%-menu"), "script-message-to uosc close-menu midframe_prompt", "menu closed by us")
 eq(hook.continued, 0, "waits for the close event")
 E.messages["prompt-event"]('{"type":"close"}')
 eq(hook.continued, 1, "loading continues")
@@ -320,7 +320,7 @@ play(E, VP, 23.976)
 assert(last_vf(E):find('"num":48000'), "default 2x kept: " .. last_vf(E))
 -- "Play original" disables interpolation for this file
 E.messages["prompt-event"]('{"type":"activate","value":"f:off"}')
-eq(last_vf(E), "vf remove @framegen", "original playback")
+eq(last_vf(E), "vf remove @midframe", "original playback")
 
 -- test_prompt_timeout: an unanswered prompt continues loading
 E = make_env({ cal = { ["1920x1080"] = FULL } })
@@ -346,14 +346,14 @@ E.props["idle-active"] = true
 E.props["osd-dimensions"] = { w = 1440, h = 810 }
 E.observers["idle-active"]("idle-active", true)
 assert(last_osd(E):find("Drop a video here", 1, true) and last_osd(E):find("RIFE ready", 1, true), "idle drawn")
-assert(E.forced["fg-idle-click"], "click bound while idle")
+assert(E.forced["mf-idle-click"], "click bound while idle")
 local _, boxes = require("overlay").idle(1440, 810, "ready")
 E.props["mouse-pos"] = { x = boxes.paste[1] + 10, y = boxes.paste[2] + 10 }
-E.forced["fg-idle-click"]()
+E.forced["mf-idle-click"]()
 eq(E.cmds[#E.cmds], "script-binding uosc/paste", "paste clicked")
 E.props["idle-active"] = false
 E.observers["idle-active"]("idle-active", false)
-eq(E.forced["fg-idle-click"], nil, "click unbound when playing")
+eq(E.forced["mf-idle-click"], nil, "click unbound when playing")
 
 -- test_waits_for_stream_fps: no filter until the real fps is known, then re-plans when it changes
 E = make_env({ cal = { ["1920x1080"] = FULL } })

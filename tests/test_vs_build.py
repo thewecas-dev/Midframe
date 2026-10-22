@@ -1,4 +1,4 @@
-"""Runs fg_vs.build() in real VapourSynth with a stand-in vsmlrt (no GPU needed).
+"""Runs mf_vs.build() in real VapourSynth with a stand-in vsmlrt (no GPU needed).
 Skips when VapourSynth isn't installed."""
 import json
 import os
@@ -34,7 +34,7 @@ def fake_vsmlrt(out_format):
     return m
 
 
-import fg_vs  # noqa: E402
+import mf_vs  # noqa: E402
 
 PARAMS = json.dumps({"num": 60, "den": 1, "level": 1, "anime": True, "engines": "/tmp",
                      "matrix": "709", "range": "limited"})
@@ -49,7 +49,7 @@ def run(out_format, src_fps, w=1920, h=1080, frames=48):
     calls = []
     real = sys.modules["vsmlrt"].RIFE
     sys.modules["vsmlrt"].RIFE = lambda *a, **k: calls.append(1) or real(*a, **k)
-    out = fg_vs.build(video_in, src_fps, fg_vs.parse_params(PARAMS))
+    out = mf_vs.build(video_in, src_fps, mf_vs.parse_params(PARAMS))
     for n in range(12):
         out.get_frame(n)  # every frame, held or interpolated, must come back in one format
     assert calls, "RIFE was never used"
@@ -74,10 +74,10 @@ def test_odd_resolution():
 def test_passthrough_when_not_faster_or_unknown():
     sys.modules["vsmlrt"] = fake_vsmlrt(vs.RGBS)
     video_in = core.std.BlankClip(format=vs.YUV420P8, width=640, height=360, length=10)
-    p = fg_vs.parse_params(PARAMS)  # target 60
-    assert fg_vs.build(video_in, 59.94, {**p, "num": 60000, "den": 1001}) is video_in  # target == source
-    assert fg_vs.build(video_in, 60.0, p) is video_in                                  # target == source
-    assert fg_vs.build(video_in, 0.0, p) is video_in                                   # fps unknown
+    p = mf_vs.parse_params(PARAMS)  # target 60
+    assert mf_vs.build(video_in, 59.94, {**p, "num": 60000, "den": 1001}) is video_in  # target == source
+    assert mf_vs.build(video_in, 60.0, p) is video_in                                  # target == source
+    assert mf_vs.build(video_in, 0.0, p) is video_in                                   # fps unknown
 
 
 def test_build_engines_writes_calibration():
@@ -89,7 +89,7 @@ def test_build_engines_writes_calibration():
         assert list(cal) == [3] and cal[3] > 0, cal
         cal = build_engines.main(d, 1280, 720)          # fills the rest, keeps level 3
         assert sorted(cal) == [1, 2, 3, 4], cal
-        assert fg_vs.read_cal(d, 1280, 720) == cal
+        assert mf_vs.read_cal(d, 1280, 720) == cal
 
 
 if __name__ == "__main__":

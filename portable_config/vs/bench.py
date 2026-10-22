@@ -1,9 +1,9 @@
-"""Measure where Tween's time goes, outside mpv. Run with the bundled Python, from the install folder:
+"""Measure where Midframe's time goes, outside mpv. Run with the bundled Python, from the install folder:
 
     vs-runtime\\python.exe portable_config\\vs\\bench.py [width height]
 
 Prints frames/second for: colour conversion only, raw RIFE per level (also recorded as calibration),
-and the full Tween filter per level. Default 1080p, 23.976 -> 47.952 fps (2x): real time needs >= 48.
+and the full Midframe filter per level. Default 1080p, 23.976 -> 47.952 fps (2x): real time needs >= 48.
 """
 import json
 import os
@@ -12,11 +12,11 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vapoursynth as vs  # noqa: E402
-import fg_vs  # noqa: E402
+import mf_vs  # noqa: E402
 import build_engines  # noqa: E402
 
 core = vs.core
-ENGINES = os.path.join(fg_vs.HERE, "..", "engines")
+ENGINES = os.path.join(mf_vs.HERE, "..", "engines")
 FRAMES = 240
 
 
@@ -45,11 +45,11 @@ def main(w=1920, h=1080):
     measure("convert only (YUV->RGB->YUV)", core.resize.Bicubic(rgb, format=vs.YUV420P10, matrix_s="709"))
     cal = build_engines.main(ENGINES, w, h)
     for level, fps in sorted(cal.items()):
-        print(f"{'raw RIFE   L%d %s' % (level, fg_vs.LADDER[level - 1]['label']):<40} {fps:7.1f} fps")
+        print(f"{'raw RIFE   L%d %s' % (level, mf_vs.LADDER[level - 1]['label']):<40} {fps:7.1f} fps")
     for level in sorted(cal):
-        params = fg_vs.parse_params(json.dumps({"num": 48000, "den": 1001, "level": level, "anime": True,
+        params = mf_vs.parse_params(json.dumps({"num": 48000, "den": 1001, "level": level, "anime": True,
                                                 "engines": ENGINES, "matrix": "709", "range": "limited"}))
-        measure(f"Tween      L{level} {fg_vs.LADDER[level - 1]['label']}", fg_vs.build(src, 24000 / 1001, params))
+        measure(f"Midframe      L{level} {mf_vs.LADDER[level - 1]['label']}", mf_vs.build(src, 24000 / 1001, params))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# Builds dist\Tween-Setup.exe on Windows. From the repo root:
+# Builds dist\Midframe-Setup.exe on Windows. From the repo root:
 #   powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 # Needs 7-Zip (7z.exe) and Inno Setup 6 (iscc.exe) on PATH, and ~10 GB free disk.
 $ErrorActionPreference = "Stop"
@@ -67,7 +67,7 @@ foreach ($m in $RIFE_MODELS) {
 }
 if (-not (Test-Path "$plugins\vstrt.dll")) { throw "vstrt.dll not found (archive layout changed?)" }
 
-# Our config + scripts; vsmlrt.py lives next to fg_vs.py so the import always resolves
+# Our config + scripts; vsmlrt.py lives next to mf_vs.py so the import always resolves
 Copy-Item "$root\portable_config" "$app\portable_config" -Recurse
 $vsmlrtPy = Get-ChildItem $plugins -Recurse -Filter vsmlrt.py | Select-Object -First 1
 if (-not $vsmlrtPy) { throw "vsmlrt.py not found" }
@@ -82,4 +82,4 @@ Copy-Item "$PSScriptRoot\icon.ico" "$app\icon.ico"
 # Installer
 & iscc "/DAppDir=$app" "/O$root\dist" "$PSScriptRoot\installer.iss"
 if ($LASTEXITCODE) { throw "Inno Setup failed" }
-Write-Host "Done: $root\dist\Tween-Setup.exe" -ForegroundColor Green
+Write-Host "Done: $root\dist\Midframe-Setup.exe" -ForegroundColor Green

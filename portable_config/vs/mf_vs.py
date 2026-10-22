@@ -51,25 +51,25 @@ def parse_params(user_data):
     try:
         p = json.loads(user_data)
     except (TypeError, ValueError):
-        raise ValueError(f"framegen: user-data is not JSON: {user_data!r}")
+        raise ValueError(f"midframe: user-data is not JSON: {user_data!r}")
     if not isinstance(p, dict):
-        raise ValueError("framegen: user-data must be an object")
+        raise ValueError("midframe: user-data must be an object")
     for key, typ in (("num", int), ("den", int), ("level", int), ("anime", bool),
                      ("engines", str), ("matrix", str), ("range", str)):
         v = p.get(key)
         if not isinstance(v, typ) or (typ is int and isinstance(v, bool)):
-            raise ValueError(f"framegen: bad or missing {key!r}")
+            raise ValueError(f"midframe: bad or missing {key!r}")
     if p["num"] <= 0 or p["den"] <= 0:
-        raise ValueError("framegen: fps must be positive")
+        raise ValueError("midframe: fps must be positive")
     if not 1 <= p["level"] <= len(LADDER):
-        raise ValueError(f"framegen: level {p['level']} outside 1..{len(LADDER)}")
+        raise ValueError(f"midframe: level {p['level']} outside 1..{len(LADDER)}")
     if p["matrix"] not in MATRICES or p["range"] not in RANGES:
-        raise ValueError("framegen: unknown matrix/range")
+        raise ValueError("midframe: unknown matrix/range")
     return p
 
 
-# Installed layout: <app>/portable_config/vs/fg_vs.py and <app>/vs-runtime/vs-plugins/vstrt.dll
-PLUGINS = os.environ.get("FRAMEGEN_VS_PLUGINS", os.path.join(HERE, "..", "..", "vs-runtime", "vs-plugins"))
+# Installed layout: <app>/portable_config/vs/mf_vs.py and <app>/vs-runtime/vs-plugins/vstrt.dll
+PLUGINS = os.environ.get("MIDFRAME_VS_PLUGINS", os.path.join(HERE, "..", "..", "vs-runtime", "vs-plugins"))
 
 
 def pad_multiple(level):

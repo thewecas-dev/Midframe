@@ -1,4 +1,4 @@
--- Tween (script id "framegen"): wires RIFE interpolation (vs/rife.vpy) into mpv with before-playback prompts
+-- Midframe (script id "midframe"): wires RIFE interpolation (vs/rife.vpy) into mpv with before-playback prompts
 -- (YouTube quality, frame rate), per-resolution TensorRT engines built on demand, auto step-down,
 -- failure fallback, crash-resume state, start screen, notices and a debug overlay.
 local mp = require "mp"
@@ -18,16 +18,16 @@ local o = {
     python = "~~exe_dir/vs-runtime/python.exe",
     engines = "~~/engines",
 }
-require("mp.options").read_options(o, "framegen")
+require("mp.options").read_options(o, "midframe")
 
 local function expand(p) return mp.command_native({ "expand-path", p }) end
 
 local VPY = expand("~~/vs/rife.vpy")
 local BUILDER = expand("~~/vs/build_engines.py")
 local ENGINES = expand(o.engines)
-local STATE_FILE = expand("~~/framegen-last.json")
-local PREFS = expand("~~/framegen-prefs.json")
-local ERROR_LOG = expand("~~/framegen-error.log")
+local STATE_FILE = expand("~~/midframe-last.json")
+local PREFS = expand("~~/midframe-prefs.json")
+local ERROR_LOG = expand("~~/midframe-error.log")
 local REF_W, REF_H = 1920, 1080  -- reference size: every level is built + measured here at setup
 local PROMPT_TIMEOUT = 90        -- seconds before an unanswered prompt lets playback continue
 local QUALITIES = { "auto", "2160", "1440", "1080", "720", "480" }
@@ -47,7 +47,7 @@ local function write_json(path, t)
     f:close()
 end
 
-local LADDER = assert(read_json(expand("~~/vs/ladder.json")), "framegen: vs/ladder.json missing")
+local LADDER = assert(read_json(expand("~~/vs/ladder.json")), "midframe: vs/ladder.json missing")
 local MATRIX = { ["bt.709"] = "709", ["bt.601"] = "170m", ["bt.2020-ncl"] = "2020ncl" }
 local prefs = read_json(PREFS) or {}
 
@@ -78,7 +78,7 @@ local function notice(text, secs, kind)
 end
 
 local function remove()
-    if S.added then mp.commandv("vf", "remove", "@framegen") end
+    if S.added then mp.commandv("vf", "remove", "@midframe") end
     S.added = false
 end
 
@@ -123,12 +123,12 @@ local function sync_ui()
     local t, lv = target()
     local src = S.src_num and fps.fmt(S.src_num / S.src_den)
     local tip = t and ("Frame rate: " .. src .. " → " .. fps.fmt(t) .. " fps (F)") or "Frame rate (F)"
-    mp.commandv("script-message-to", "uosc", "set-button", "framegen_fps", utils.format_json({
+    mp.commandv("script-message-to", "uosc", "set-button", "midframe_fps", utils.format_json({
         icon = "bolt", active = t ~= nil, badge = t and string.format("%d", math.floor(t + 0.5)) or nil,
-        tooltip = tip, command = "script-binding framegen/fps-menu",
+        tooltip = tip, command = "script-binding midframe/fps-menu",
     }))
-    mp.commandv("script-message-to", "uosc", "set-button", "framegen_debug", utils.format_json({
-        icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding framegen/debug",
+    mp.commandv("script-message-to", "uosc", "set-button", "midframe_debug", utils.format_json({
+        icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding midframe/debug",
     }))
     local w, h = video_size()
     local status = ""
@@ -142,7 +142,7 @@ local function sync_ui()
             status = status .. " · interpolation off"
         end
     end
-    mp.set_property_native("user-data/framegen/status", status)
+    mp.set_property_native("user-data/midframe/status", status)
 end
 
 local apply, draw_idle, retarget
@@ -211,7 +211,7 @@ apply = function()
         engines = ENGINES, matrix = S.matrix, range = S.range,
     })
     S.added = true
-    mp.commandv("vf", "add", "@framegen:vapoursynth=file=" .. quoted(VPY) ..
+    mp.commandv("vf", "add", "@midframe:vapoursynth=file=" .. quoted(VPY) ..
         ":buffered-frames=8:concurrent-frames=8:user-data=" .. quoted(json))
     sync_ui()
 end
@@ -276,7 +276,7 @@ mp.register_event("log-message", function(e)
         remove()
         sync_ui()
         local line = t:gsub("%s+$", "")
-        notice("Interpolation turned off: " .. line .. " (details: portable_config\\framegen-error.log)", 8, "bad")
+        notice("Interpolation turned off: " .. line .. " (details: portable_config\\midframe-error.log)", 8, "bad")
         msg.warn("interpolation disabled after: " .. line)
     end
 end)
@@ -389,18 +389,18 @@ mp.add_key_binding("F", "fps-menu", function()
     if not S.src_num then return notice("Open a video first", 2, "info") end
     local cap = fps.cap(mp.get_property_number("display-fps"))
     local items = fps_items(S.src_num, S.src_den, cap,
-        function(c) return { "script-message-to", "framegen", "set-fps", c } end)
+        function(c) return { "script-message-to", "midframe", "set-fps", c } end)
     items[#items].separator = true
-    items[#items + 1] = { title = "Custom…", hint = "type a value", value = "script-message-to framegen fps-custom" }
+    items[#items + 1] = { title = "Custom…", hint = "type a value", value = "script-message-to midframe fps-custom" }
     local t, lv = target()
     items[#items + 1] = {
-        title = "Interpolation", value = "script-message-to framegen toggle",
+        title = "Interpolation", value = "script-message-to midframe toggle",
         icon = S.enabled and "toggle_on" or "toggle_off",
         hint = (not S.enabled and "off") or (t and LADDER[lv.rife].label) or (S.building and "preparing…")
             or "on · not running",
     }
     mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json({
-        type = "framegen_fps", title = "Frame rate", items = items, search_style = "disabled",
+        type = "midframe_fps", title = "Frame rate", items = items, search_style = "disabled",
         footnote = "Source " .. fps.fmt(S.src_num / S.src_den) .. " fps · Display " .. cap .. " Hz",
     }))
 end)
@@ -417,7 +417,7 @@ local function finish_prompt()
 end
 local function open_prompt(menu, done)
     finish_prompt()
-    menu.type = "framegen_prompt"
+    menu.type = "midframe_prompt"
     menu.callback = { mp.get_script_name(), "prompt-event" }
     menu.search_style = "disabled"
     prompt = { done = done, timer = mp.add_timeout(PROMPT_TIMEOUT, finish_prompt) }
@@ -433,7 +433,7 @@ mp.register_script_message("prompt-event", function(json)
         elseif kind == "f" then
             set_choice(v, true)
         end
-        mp.commandv("script-message-to", "uosc", "close-menu", "framegen_prompt")
+        mp.commandv("script-message-to", "uosc", "close-menu", "midframe_prompt")
     elseif e.type == "close" then
         finish_prompt()
     end
@@ -558,7 +558,7 @@ end
 draw_idle = function()
     if not mp.get_property_bool("idle-active") then
         ov_idle:remove()
-        mp.remove_key_binding("fg-idle-click")
+        mp.remove_key_binding("mf-idle-click")
         return
     end
     local w, h = osd_size()
@@ -566,7 +566,7 @@ draw_idle = function()
     ov_idle.res_x, ov_idle.res_y = w, h
     ov_idle.data, idle_boxes = overlay.idle(w, h, state)
     ov_idle:update()
-    mp.add_forced_key_binding("MBTN_LEFT", "fg-idle-click", idle_click)
+    mp.add_forced_key_binding("MBTN_LEFT", "mf-idle-click", idle_click)
 end
 mp.observe_property("idle-active", "bool", draw_idle)
 mp.observe_property("osd-dimensions", "native", function() draw_idle() end)

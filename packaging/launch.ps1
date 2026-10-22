@@ -1,4 +1,4 @@
-# Starts Tween (mpv). If mpv crashes, reopens the same file at the same spot with
+# Starts Midframe (mpv). If mpv crashes, reopens the same file at the same spot with
 # interpolation off (at most twice per session). Startup errors go to launch-error.log + a message box,
 # since the shortcut runs this script with a hidden window.
 param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $Files = @())
@@ -8,7 +8,7 @@ $app = $PSScriptRoot
 trap {
     $_ | Out-String | Set-Content "$app\launch-error.log"
     Add-Type -AssemblyName PresentationFramework
-    [System.Windows.MessageBox]::Show("Tween could not start:`n`n$_`n`nDetails: $app\launch-error.log", "Tween") | Out-Null
+    [System.Windows.MessageBox]::Show("Midframe could not start:`n`n$_`n`nDetails: $app\launch-error.log", "Midframe") | Out-Null
     exit 1
 }
 
@@ -18,7 +18,7 @@ if ($vsscript) {
     $env:VSSCRIPT_PATH = $vsscript.FullName
     $env:PATH = "$app\vs-runtime;$($vsscript.DirectoryName);$app;$env:PATH"
 }
-$state = "$app\portable_config\framegen-last.json"
+$state = "$app\portable_config\midframe-last.json"
 # Load CUDA kernels on first use: faster TensorRT engine load after every seek (the filter reloads).
 $env:CUDA_MODULE_LOADING = "LAZY"
 
@@ -45,6 +45,6 @@ for ($i = 0; $i -le 2; $i++) {
     if ($p.ExitCode -ge 0 -and $p.ExitCode -le 4) { break }
     if (-not (Test-Path $state)) { break }
     $last = Get-Content $state -Raw | ConvertFrom-Json
-    $argv = @("--start=$($last.pos)", "--script-opts=framegen-enabled=no,framegen-ask=no",
+    $argv = @("--start=$($last.pos)", "--script-opts=midframe-enabled=no,midframe-ask=no",
         "--osd-playing-msg=Recovered from a crash - interpolation off (press F to turn it back on)", $last.path)
 }

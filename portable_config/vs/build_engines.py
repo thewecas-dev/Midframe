@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import fg_vs
+import mf_vs
 
 FRAMES = 96
 
@@ -22,7 +22,7 @@ def measure(level, engines, width, height):
     core = vs.core
     a = core.std.BlankClip(format=vs.RGBH, width=width, height=height, length=1, color=[0.40, 0.40, 0.40])
     b = core.std.BlankClip(format=vs.RGBH, width=width, height=height, length=1, color=[0.45, 0.45, 0.45])
-    clip = fg_vs.rife(core.std.Interleave([a * FRAMES, b * FRAMES]), 2, level, engines)[:FRAMES]
+    clip = mf_vs.rife(core.std.Interleave([a * FRAMES, b * FRAMES]), 2, level, engines)[:FRAMES]
     for _ in clip[:8].frames(prefetch=8):  # warm-up: engine build/load, first inferences
         pass
     t = time.perf_counter()
@@ -35,15 +35,15 @@ def measure(level, engines, width, height):
 
 
 def main(engines, width, height, levels=()):
-    levels = [int(x) for x in levels] or list(range(1, len(fg_vs.LADDER) + 1))
-    cal = fg_vs.read_cal(engines, width, height)
+    levels = [int(x) for x in levels] or list(range(1, len(mf_vs.LADDER) + 1))
+    cal = mf_vs.read_cal(engines, width, height)
     for level in levels:
         if level in cal:
             continue
-        print(f"{width}x{height} level {level}/{len(fg_vs.LADDER)}: {fg_vs.LADDER[level - 1]['label']}", flush=True)
+        print(f"{width}x{height} level {level}/{len(mf_vs.LADDER)}: {mf_vs.LADDER[level - 1]['label']}", flush=True)
         cal[level] = measure(level, engines, width, height)
         print(f"  {cal[level]} fps", flush=True)
-        fg_vs.write_cal(engines, width, height, cal)  # progress survives a crash in a later level
+        mf_vs.write_cal(engines, width, height, cal)  # progress survives a crash in a later level
     print("done", flush=True)
     return cal
 

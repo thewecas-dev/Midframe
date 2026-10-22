@@ -1,6 +1,6 @@
 """Draws the app icon: packaging/icon.png (512 px) and packaging/icon.ico (16-256 px).
 Run on any OS with Pillow:  python3 packaging/make_icon.py
-A play mark with two fading "in-between" copies behind it: the frames Tween generates."""
+A play mark with two fading "in-between" copies behind it: the frames Midframe generates."""
 import os
 
 from PIL import Image, ImageDraw, ImageFilter

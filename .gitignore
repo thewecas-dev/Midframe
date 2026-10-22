@@ -3,8 +3,9 @@ build/
 *.engine
 __pycache__/
 .DS_Store
-portable_config/framegen-error.log
-portable_config/framegen-last.json
+portable_config/midframe-error.log
+portable_config/midframe-last.json
 portable_config/engines/
-portable_config/framegen-prefs.json
+portable_config/midframe-prefs.json
 portable_config.zip
+docs/
