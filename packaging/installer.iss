@@ -7,7 +7,7 @@
 AppName=Midframe
 AppVersion=0.2.0
 AppPublisher=Midframe contributors
-AppPublisherURL=https://github.com/REPLACE_ME/midframe
+AppPublisherURL=https://github.com/thewecas-dev/Midframe
 DefaultDirName={localappdata}\Midframe
 SetupIconFile={#AppDir}\icon.ico
 UninstallDisplayIcon={app}\icon.ico
