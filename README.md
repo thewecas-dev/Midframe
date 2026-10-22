@@ -54,19 +54,11 @@ Tested on an RTX 4050 Laptop (6 GB): 1080p at 2× and 3× and YouTube 1080p 30�
 
 ## Install
 
-There is no prebuilt download yet. You build the installer yourself on Windows, once, then run it.
+**1. Download.** Get the setup from the [latest release](https://github.com/thewecas-dev/Midframe/releases/latest).
+It comes as `Midframe-Setup` plus several `.bin` slices; keep them all in one folder. Every push to `main` also
+builds one on GitHub Actions, downloadable from the workflow run as an artifact.
 
-**1. Build the installer.** Install [7-Zip](https://www.7-zip.org) and [Inno Setup 6](https://jrsoftware.org/isinfo.php),
-make sure both are on PATH, and have about 10 GB free. Then from the repo root:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build.ps1
-```
-
-It downloads pinned versions of mpv, VapourSynth, vs-mlrt with TensorRT, the RIFE models, uosc and yt-dlp, and
-produces the setup in `dist\`.
-
-**2. Run the setup** from `dist\`. It installs to `%LOCALAPPDATA%\Midframe`. No admin rights needed.
+**2. Run the setup.** It installs to `%LOCALAPPDATA%\Midframe`. No admin rights needed.
 
 **3. Fix three Windows settings.** These make or break smooth playback. Do them once.
 
@@ -139,9 +131,16 @@ vs-runtime\python.exe portable_config\vs\bench.py [width height]
 
 ## Build from source
 
-See [Install](#install): `packaging\build.ps1` is the whole build. It pins every download, adds this repo's
-`portable_config`, and produces the setup plus `.bin` slices in `dist\`. The icon is drawn by
-`packaging\make_icon.py` (Pillow).
+On Windows, with [7-Zip](https://www.7-zip.org) and [Inno Setup 6](https://jrsoftware.org/isinfo.php) on PATH
+and about 10 GB free:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+It downloads pinned versions of mpv, VapourSynth, vs-mlrt with the TensorRT runtime, the RIFE models, uosc and
+yt-dlp, adds this repo's `portable_config`, and produces the setup plus `.bin` slices in `dist\`. The same script
+runs in `.github/workflows/build.yml`. The icon is drawn by `packaging\make_icon.py` (Pillow).
 
 Layout:
 
