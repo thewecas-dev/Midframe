@@ -1,5 +1,4 @@
-<p align="center"><img src="packaging/icon.png" width="112" alt="Midframe icon"></p>
-<h1 align="center">Midframe</h1>
+<p align="center"><img src="packaging/banner.png" alt="Midframe" width="800"></p>
 <p align="center"><strong>Watch 24 fps films at 144. Watch 30 fps YouTube at 60.</strong><br>
 A Windows video player that generates the missing frames in real time, on your NVIDIA GPU.</p>
 
