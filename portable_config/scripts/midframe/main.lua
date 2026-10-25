@@ -703,6 +703,25 @@ local function label_choice(c)
     return c .. " fps"
 end
 local function label_quality(q) return q == "auto" and ("Auto · up to " .. sheet.AUTO_MAX_HEIGHT .. "p") or (q .. "p") end
+local AUDIO_OFFSETS = { -200, -150, -100, -50, 0, 50, 100, 150, 200 }
+local function setting_options(key)
+    local out = {}
+    if key == "choice" then for _, c in ipairs(CHOICES) do out[#out + 1] = { label = label_choice(c), value = c } end
+    elseif key == "quality" then for _, q in ipairs(sheet.QUALITIES) do out[#out + 1] = { label = label_quality(q.value), value = q.value } end
+    elseif key == "headroom" then for _, h in ipairs(HEADROOMS) do out[#out + 1] = { label = string.format("%.1f×", h) .. (h == 1.5 and " (recommended)" or h == 1.2 and " (tight)" or " (safe)"), value = h } end
+    elseif key == "audio" then for _, a in ipairs(AUDIO_OFFSETS) do out[#out + 1] = { label = (a > 0 and "+" or "") .. a .. " ms", value = a } end end
+    return out
+end
+local function setting_value(key)
+    return ({ choice = S.choice, quality = S.quality, headroom = S.headroom, audio = S.audio_delay or 0 })[key]
+end
+local function set_setting(key, value)
+    if key == "choice" then S.choice = value; if S.src_num then retarget() end
+    elseif key == "quality" then S.quality = value
+    elseif key == "headroom" then S.headroom = value; auto.HEADROOM = value
+    elseif key == "audio" then S.audio_delay = value; mp.set_property_number("audio-delay", value / 1000) end
+    save_prefs()
+end
 local function engines_model()
     local out = {}
     for _, s in ipairs(SIZES) do
@@ -732,6 +751,7 @@ end
 local function settings_model(W, H)
     return settings.render({
         W = W, H = H, tab = TAB, ladder = LADDER, scroll = S.settings_scroll or 0,
+        dropdown = S.dropdown and { key = S.dropdown, options = setting_options(S.dropdown), selected = setting_value(S.dropdown) } or nil,
         playback = { ask_yt = S.ask_yt, ask_local = S.ask_local, rate_label = label_choice(S.choice), quality_label = label_quality(S.quality),
             anime = S.anime, even = S.even, headroom_label = string.format("%.1f×", S.headroom) .. (S.headroom == 1.5 and " (recommended)" or ""),
             audio_label = string.format("%d ms", S.audio_delay or 0) },
@@ -741,10 +761,6 @@ local function settings_model(W, H)
             { "Ctrl+− / Ctrl++", "Audio offset ±100 ms" } },
         version = "Midframe " .. VERSION .. " · TensorRT",
     })
-end
-local function cycle(list, cur, eq)
-    for i, v in ipairs(list) do if (eq and eq(v, cur)) or v == cur then return list[i % #list + 1] end end
-    return list[1]
 end
 
 -- ---------- home ----------
@@ -903,7 +919,7 @@ handle_action = function(a)
             modal_redraw()
         end
     elseif kind == "settings" then
-        if a.kind == "tab" then TAB = a.value; S.settings_scroll = 0; modal_redraw()
+        if a.kind == "tab" then TAB = a.value; S.settings_scroll = 0; S.dropdown = nil; modal_redraw()
         elseif a.kind == "key" and (a.key == "WHEEL_UP" or a.key == "WHEEL_DOWN" or a.key == "UP" or a.key == "DOWN" or a.key == "PGUP" or a.key == "PGDWN") then
             local step = (a.key == "PGUP" or a.key == "PGDWN") and 240 or 48
             local dir = (a.key == "WHEEL_UP" or a.key == "UP" or a.key == "PGUP") and -1 or 1
@@ -914,21 +930,28 @@ handle_action = function(a)
             S[a.key] = not S[a.key]; save_prefs()
             if a.key == "anime" and S.added then retarget() end
             modal_redraw()
-        elseif a.kind == "cycle" then
-            if a.key == "choice" then S.choice = cycle(CHOICES, S.choice); if S.src_num then retarget() end
-            elseif a.key == "quality" then
-                local vals = {} for _, q in ipairs(sheet.QUALITIES) do vals[#vals + 1] = q.value end
-                S.quality = cycle(vals, S.quality)
-            elseif a.key == "headroom" then S.headroom = cycle(HEADROOMS, S.headroom, function(v, c) return math.abs(v - c) < 0.01 end); auto.HEADROOM = S.headroom
-            elseif a.key == "audio" then
-                S.audio_delay = cycle({ -200, -150, -100, -50, 0, 50, 100, 150, 200 }, S.audio_delay or 0)
-                mp.set_property_number("audio-delay", S.audio_delay / 1000)
+        elseif a.kind == "cycle" then  -- a select box: open its dropdown (or close it if already open)
+            S.dropdown = S.dropdown ~= a.key and a.key or nil; modal_redraw()
+            -- keep the control in view while its list is open
+            local anc = Modal.canvas and Modal.canvas.anchors and Modal.canvas.anchors[a.key]
+            if S.dropdown and anc then
+                local _, H = design_size()
+                local lo, hi = 112, H - 78 - 36
+                if anc[2] < lo or anc[2] > hi then
+                    S.settings_scroll = math.max(0, math.min(Modal.canvas.scroll_max or 0, (S.settings_scroll or 0) + anc[2] - (lo + hi) / 2))
+                    modal_redraw()
+                end
             end
-            save_prefs(); modal_redraw()
+        elseif a.kind == "pick" then
+            set_setting(a.key, a.value); S.dropdown = nil; modal_redraw()
+        elseif a.kind == "dropdown_close" then
+            S.dropdown = nil; modal_redraw()
+        elseif a.kind == "key" and a.key == "ESC" and S.dropdown then
+            S.dropdown = nil; modal_redraw()
         elseif a.kind == "prepare" then start_build({ w = a.w, h = a.h }); modal_redraw()
         elseif a.kind == "config" then
             mp.command_native_async({ name = "subprocess", playback_only = false, args = { "explorer", expand("~~/") } }, function() end)
-        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then modal_close()
+        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then S.dropdown = nil; modal_close()
         elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
             local i = 1 for j, t in ipairs(settings.TABS) do if t[1] == TAB then i = j end end
             TAB = settings.TABS[((i - 1 + (a.key == "RIGHT" and 1 or -1)) % #settings.TABS) + 1][1]

@@ -10,14 +10,41 @@ local M = {}
 M.TABS = { { "playback", "Playback" }, { "engines", "Engines" }, { "system", "System" }, { "keys", "Keys" } }
 local DW = 460
 
-local function select_box(c, x, y, label, action, right)
+local function select_box(c, x, y, label, action, right, open)
     local w = ui.textw(label, 13) + 40
     local bx = right and (x - w) or x
-    c:rect(bx, y, w, 32, 8, C.raised, 0, C.border_strong, 1)
+    c:rect(bx, y, w, 32, 8, C.raised, 0, open and C.accent or C.border_strong, 1)
     c:text(bx + 12, y + 16, 4, 13, C.text, label, { bold = true })
     ui.icon(c, "chevron", bx + w - 24, y + 8, 16, C.muted)
     c:box(bx, y, w, 32, action)
+    c.anchors = c.anchors or {}
+    c.anchors[action.key] = { bx, y, w, 32 }
     return w
+end
+
+-- Dropdown list for an open select: drawn last (on top, unclipped), opens downward unless it would leave the drawer.
+local function dropdown(c, m, H)
+    local d = m.dropdown
+    local a = c.anchors and c.anchors[d.key]
+    if not a then return end
+    local ih, pad = 34, 6
+    local w = math.max(a[3], 220)
+    local h = #d.options * ih + pad * 2
+    local x = a[1] + a[3] - w
+    local y = a[2] + a[4] + 6
+    if y + h > H - 78 then y = a[2] - 6 - h end          -- open upward when there is no room below
+    y = math.max(108, math.min(y, H - 78 - h))            -- and never leave the drawer either way
+    c:box(0, 0, c.w, H, { kind = "dropdown_close" })  -- anything outside the list closes it
+    c:shadow(x, y, w, h, 10, 10)
+    c:rect(x, y, w, h, 10, C.overlay, 0, C.border_strong, 1)
+    for i, opt in ipairs(d.options) do
+        local iy = y + pad + (i - 1) * ih
+        local sel = opt.value == d.selected
+        if sel then c:rect(x + pad, iy, w - pad * 2, ih, 6, C.accent_soft) end
+        c:text(x + pad + 12, iy + ih / 2, 4, 13, sel and C.accent_text or C.text, opt.label, { bold = sel })
+        if sel then ui.icon(c, "check", x + w - pad - 28, iy + 9, 16, C.accent_text) end
+        c:box(x + pad, iy, w - pad * 2, ih, { kind = "pick", key = d.key, value = opt.value })
+    end
 end
 
 local function row(c, x, w, y, label, sub, kind)
@@ -64,19 +91,19 @@ function M.render(m)
         h = row(c, x, w, y, "Ask before local files", "Shows the frame-rate sheet before a file plays")
         ui.toggle(c, x + w - 40, y + 4, p.ask_local); c:box(x, y, w, h, { kind = "toggle", key = "ask_local" }); y = y + h + 6
         h = row(c, x, w, y, "Default frame rate", "Pre-selected in the sheet and used when not asking")
-        select_box(c, x + w, y, p.rate_label, { kind = "cycle", key = "choice" }, true); y = y + h + 6
+        select_box(c, x + w, y, p.rate_label, { kind = "cycle", key = "choice" }, true, m.dropdown and m.dropdown.key == "choice"); y = y + h + 6
         h = row(c, x, w, y, "Default YouTube quality", "")
-        select_box(c, x + w, y, p.quality_label, { kind = "cycle", key = "quality" }, true); y = y + h + 14
+        select_box(c, x + w, y, p.quality_label, { kind = "cycle", key = "quality" }, true, m.dropdown and m.dropdown.key == "quality"); y = y + h + 14
         group("INTERPOLATION")
         h = row(c, x, w, y, "Faithful anime mode", "Keeps held drawings held and never blends across a cut")
         ui.toggle(c, x + w - 40, y + 4, p.anime); c:box(x, y, w, h, { kind = "toggle", key = "anime" }); y = y + h + 6
         h = row(c, x, w, y, "Prefer even frame rates", "Pre-selects a rate that divides your display refresh")
         ui.toggle(c, x + w - 40, y + 4, p.even); c:box(x, y, w, h, { kind = "toggle", key = "even" }); y = y + h + 6
         h = row(c, x, w, y, "Headroom", "How much faster than needed an engine must measure")
-        select_box(c, x + w, y, p.headroom_label, { kind = "cycle", key = "headroom" }, true); y = y + h + 14
+        select_box(c, x + w, y, p.headroom_label, { kind = "cycle", key = "headroom" }, true, m.dropdown and m.dropdown.key == "headroom"); y = y + h + 14
         group("AUDIO")
         h = row(c, x, w, y, "Audio offset", "Positive delays audio. Ctrl+− / Ctrl++ during playback")
-        select_box(c, x + w, y, p.audio_label, { kind = "cycle", key = "audio" }, true); y = y + h
+        select_box(c, x + w, y, p.audio_label, { kind = "cycle", key = "audio" }, true, m.dropdown and m.dropdown.key == "audio"); y = y + h
     elseif m.tab == "engines" then
         c:text(x, y + 8, 4, 12, C.muted, "Each frame size needs its own TensorRT engines, built once and")
         c:text(x, y + 26, 4, 12, C.muted, "measured on this GPU. Numbers are output fps at 2×.")
@@ -151,6 +178,7 @@ function M.render(m)
     local bw = ui.textw("Open config folder", 14, true) + 24
     ui.button(c, dx + DW - 24 - bw, fy - 6, bw, 40, "Open config folder", "ghost")
     c:box(dx + DW - 24 - bw, fy - 6, bw, 40, { kind = "config" })
+    if m.dropdown then dropdown(c, m, H) end
     return c
 end
 
