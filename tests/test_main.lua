@@ -410,7 +410,7 @@ E.props["idle-active"] = true; E.props["osd-dimensions"] = { w = 1440, h = 900 }
 E.observers["idle-active"]("idle-active", true)
 assert(osd_has(E, "Sinners (2025)"), "recent card on home")
 act(E, { kind = "recent", index = 1 })
-assert(E.cmds[#E.cmds]:find("^loadfile D:\\Movies\\Sinners%.mkv replace start=%d"), E.cmds[#E.cmds])
+assert(E.cmds[#E.cmds]:find("^loadfile D:\\Movies\\Sinners%.mkv replace %-1 start=%d"), E.cmds[#E.cmds])
 os.remove("portable_config/midframe-recent.json")
 
 -- test_waits_for_stream_fps: no filter until the real fps is known, then re-plans when it changes

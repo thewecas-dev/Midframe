@@ -771,7 +771,8 @@ mp.observe_property("idle-active", "bool", draw_home)
 -- ---------- opening files / links ----------
 local function play_path(path, pos)
     if not path or path == "" then return end
-    if pos and pos > 5 then mp.commandv("loadfile", path, "replace", "start=" .. string.format("%.1f", pos))
+    -- mpv >= 0.38: loadfile <url> <flags> <index> <options>; the index slot must be given to pass options
+    if pos and pos > 5 then mp.commandv("loadfile", path, "replace", -1, "start=" .. string.format("%.1f", pos))
     else mp.commandv("loadfile", path, "replace") end
 end
 local function open_file_dialog()
