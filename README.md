@@ -75,25 +75,35 @@ That's it. Open a file.
 
 ## Use
 
+**Home.** Midframe opens on a start screen: drop a video on it, click **Open file…** (the normal Windows dialog),
+or paste a link into the field. Recent videos sit on the right and resume where you stopped. The strip at the bottom
+shows engine and system state at a glance.
+
+**Before each video** one setup sheet appears: for YouTube, the qualities that stream actually has and the frame-rate
+tiles; for local files, the frame-rate tiles alone. Tiles are grouped into rates that divide your display refresh
+evenly and the rest, each with a hint from your GPU's calibration ("2× · 3 refreshes", "needs 4.6 quarter",
+"too heavy"). A strip underneath previews the result: `23.976 → 47.952 fps · RIFE 4.6 · plays smoothly`.
+Enter plays, Esc keeps the defaults, **Custom** takes a typed value, and "Don't ask again" remembers your answer per kind.
+
 | Key | Action |
 |---|---|
-| **Ctrl+O** | Open a file (or drag one onto the window) |
-| **Ctrl+V** | Play a YouTube or other URL from the clipboard |
-| **F** | Frame-rate menu: 1.5× 2× 2.5× 3×, 60 90 120 144, Custom…, interpolation on/off |
+| **Ctrl+O** | Open a file (Windows file dialog) |
+| **Ctrl+V** | Play the link or file path on the clipboard |
+| **F** | Frame-rate quick menu (same tiles, plus custom and the interpolation toggle) |
+| **Ctrl+,** | Settings: ask/don't ask, defaults, anime mode, headroom, audio offset, engines per resolution, system check |
 | **D** | Debug overlay |
 | **Shift+I** | mpv's own stats page |
 
-**Before each video** Midframe asks for the frame rate. For YouTube it first asks the quality
-(Auto / 2160p / 1440p / 1080p / 720p / 480p). Enter accepts the highlighted (last used) answer, Esc keeps it.
-Prefer no questions? Set `ask=no` in `portable_config\script-opts\midframe.conf`.
+The bottom bar has a quality pill (opens the sheet again), the frame-rate button with the current target, subtitles,
+debug, settings and fullscreen.
 
 **Pick a target that divides your refresh rate.** On a 144 Hz display: 2× (48) or 3× (72) for films, 2× (60) for
-30 fps video. 60 fps on 144 Hz is an uneven 2.4 refreshes per frame and looks worse than 48.
+30 fps video. 60 fps on 144 Hz is an uneven 2.4 refreshes per frame and looks worse than 48. The sheet marks the even ones.
 
 **New resolutions build one more engine.** The first 720p, 1440p or 4K video plays at its original rate for a few
-minutes while the engine builds, then interpolation switches on by itself.
+minutes while the engine builds, then interpolation switches on by itself. Settings → Engines can build them ahead of time.
 
-**Anime** is handled faithfully by default. Set `anime=no` in `midframe.conf` for live action only.
+**Anime** is handled faithfully by default (Settings → Faithful anime mode).
 
 ## How it picks a level
 

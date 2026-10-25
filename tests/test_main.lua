@@ -111,6 +111,7 @@ local function make_env(opts)
         get_property = function(p) return E.props[p] end,
         set_property = function(p, v) E.set[p] = v end,
         set_property_native = function(p, v) E.set[p] = v end,
+        set_property_number = function(p, v) E.set[p] = v end,
         get_script_name = function() return "midframe" end,
         get_time = function() return 0 end,
         register_event = function(n, f) E.events[n] = f end,
@@ -155,6 +156,7 @@ local function last_vf(E)
     for i = #E.cmds, 1, -1 do if E.cmds[i]:find("^vf ") then return E.cmds[i] end end
 end
 local function last_osd(E) return E.osd[#E.osd] or "" end
+local function osd_has(E, s) for i = #E.osd, math.max(1, #E.osd - 3), -1 do if E.osd[i]:find(s, 1, true) then return true end end return false end
 local function last_cmd(E, pat)
     for i = #E.cmds, 1, -1 do if E.cmds[i]:find(pat) then return E.cmds[i] end end
 end
@@ -164,32 +166,44 @@ local function play(E, vp, cfps)
     E.props["video-params"] = vp
     E.observers["video-params"]()
 end
-local function build_args(E, i) return table.concat(E.async[i].cmd.args, " ", 3) end  -- drop python + script
+-- engine builds among the async subprocesses (the others are system probes, dialogs)
+local function builds(E)
+    local out = {}
+    for _, a in ipairs(E.async) do if a.cmd.args and tostring(a.cmd.args[2]):find("build_engines") then out[#out + 1] = a end end
+    return out
+end
+local function build_args(E, i) return table.concat(builds(E)[i].cmd.args, " ", 3) end  -- drop python + script
+local function act(E, t) E.messages["action"](json(t)) end
+local function new_hook() local h = { deferred = 0, continued = 0 }; function h:defer() self.deferred = self.deferred + 1 end; function h:cont() self.continued = self.continued + 1 end; return h end
+local TRACKS_YT = { { type = "audio", id = 1 }, { type = "video", id = 1, ["demux-h"] = 2160, ["demux-w"] = 3840, ["demux-fps"] = 29.97 },
+    { type = "video", id = 2, ["demux-h"] = 1080, ["demux-w"] = 1920, ["demux-fps"] = 29.97, selected = true },
+    { type = "video", id = 3, ["demux-h"] = 720, ["demux-w"] = 1280, ["demux-fps"] = 29.97 } }
 
 -- test_first_launch_builds_reference: no calibration -> one build of every level at 1080p
 local E = make_env({})
-eq(#E.async, 1, "reference build started at launch")
+eq(#builds(E), 1, "reference build started at launch")
 eq(build_args(E, 1), ENGINES .. " 1920 1080", "all levels at the reference size")
 play(E, VP, 23.976)
 eq(last_vf(E), nil, "no filter while nothing is calibrated")
-eq(#E.async, 1, "no second build while one runs")
-E.props["idle-active"] = true; E.props["osd-dimensions"] = { w = 1440, h = 810 }
+eq(#builds(E), 1, "no second build while one runs")
+E.props["idle-active"] = true; E.props["osd-dimensions"] = { w = 1440, h = 900 }
 E.observers["idle-active"]()
-assert(last_osd(E):find("Preparing RIFE", 1, true), "idle screen shows building")
+assert(osd_has(E, "Preparing RIFE engines"), "home shows building")
+assert(osd_has(E, "Play something smoother."), "home drawn")
 
--- test_no_interpolation_while_building: calibration written by bench.py mid-build must not start the
--- filter while the build still owns the GPU; when the build ends, the video is re-planned.
+-- test_no_interpolation_while_building: calibration appearing mid-build must not start the filter;
+-- when the build ends, the video is re-planned.
 write(ENGINES .. "/cal_1920x1080.json", json({ w = 1920, h = 1080, levels = FULL }))
 E.messages["set-fps"]("60")
 eq(last_vf(E), nil, "no filter while the reference build runs")
 assert(E.set["user-data/midframe/status"]:find("preparing RIFE", 1, true), E.set["user-data/midframe/status"])
-E.async[1].cb(true, { status = 0 })
+builds(E)[1].cb(true, { status = 0 })
 assert(last_vf(E) and last_vf(E):find('"num":60,'), "interpolation starts once the build is done")
-assert(last_osd(E):find("RIFE ready", 1, true), last_osd(E))
+assert(osd_has(E, "RIFE ready"), last_osd(E))
 
 -- test_apply_quotes_user_data
 E = make_env({ cal = { ["1920x1080"] = FULL } })
-eq(#E.async, 0, "calibrated: nothing to build")
+eq(#builds(E), 0, "calibrated: nothing to build")
 play(E, VP, 23.976)
 local vf = last_vf(E)
 assert(vf:find("^vf add @midframe:vapoursynth=file=%%%d+%%"), vf)
@@ -208,7 +222,7 @@ assert(io.open(PREFS):read("*a"):find('"choice":"60"'), "last choice saved")
 -- test_failure_disables
 E.events["log-message"]({ prefix = "vapoursynth", level = "error", text = "TensorRT: out of memory\n" })
 eq(last_vf(E), "vf remove @midframe", "filter removed")
-assert(last_osd(E):find("Interpolation turned off: TensorRT: out of memory", 1, true), last_osd(E))
+assert(osd_has(E, "Interpolation turned off: TensorRT: out of memory"), last_osd(E))
 local before = #E.cmds
 E.events["log-message"]({ prefix = "vapoursynth", level = "error", text = "again" })
 eq(#E.cmds, before, "no repeat after disable")
@@ -229,131 +243,166 @@ eq(E.set["user-data/midframe/status"], "1920×1080 · 23.976 fps → 47.952 fps 
 E = make_env({ cal = { ["1920x1080"] = RTX4050 } })
 play(E, { w = 1280, h = 720, colormatrix = "bt.709", colorlevels = "limited" }, 23.976)
 eq(last_vf(E), nil, "no filter without an engine")
-eq(#E.async, 1, "one on-demand build")
+eq(#builds(E), 1, "one on-demand build")
 eq(build_args(E, 1), ENGINES .. " 1280 720 1", "720p fits level 1 by estimate")
-assert(last_osd(E):find("Preparing RIFE 4.26 for 1280×720", 1, true), last_osd(E))
+assert(osd_has(E, "Preparing RIFE 4.26 for 1280×720"), last_osd(E))
 assert(E.set["user-data/midframe/status"]:find("preparing RIFE 4.26", 1, true), E.set["user-data/midframe/status"])
 write(ENGINES .. "/cal_1280x720.json", json({ w = 1280, h = 720, levels = { ["1"] = 90 } }))
-E.async[1].cb(true, { status = 0 })
+builds(E)[1].cb(true, { status = 0 })
 assert(last_vf(E) and last_vf(E):find('"level":1'), "filter added once the engine exists")
 
 -- test_build_queue: a second size while one build runs waits its turn
 E = make_env({ cal = { ["1920x1080"] = RTX4050 } })
 play(E, { w = 1280, h = 720, colormatrix = "bt.709", colorlevels = "limited" }, 23.976)
 play(E, { w = 2560, h = 1440, colormatrix = "bt.709", colorlevels = "limited" }, 23.976)
-eq(#E.async, 1, "second build queued, not started")
+eq(#builds(E), 1, "second build queued, not started")
 write(ENGINES .. "/cal_1280x720.json", json({ w = 1280, h = 720, levels = { ["1"] = 90 } }))
-E.async[1].cb(true, { status = 0 })
-eq(#E.async, 2, "queued build starts after the first")
+builds(E)[1].cb(true, { status = 0 })
+eq(#builds(E), 2, "queued build starts after the first")
 assert(build_args(E, 2):find("^" .. ENGINES .. " 2560 1440 %d$"), build_args(E, 2))
 
--- test_fps_menu: uosc menu with sections, active choice and toggle
+-- test_quick_menu: F opens the tile menu; a tile applies; toggle turns interpolation off; Esc closes
 E = make_env({ cal = { ["1920x1080"] = FULL } })
+E.props["osd-dimensions"] = { w = 1440, h = 900 }
 play(E, VP, 23.976)
 E.bindings["fps-menu"]()
-local menu = last_cmd(E, "open%-menu")
-assert(menu and menu:find('"title":"Frame rate"'), menu)
-assert(menu:find('"title":"Multiply"') and menu:find('"title":"Fixed"'), "sections")
-assert(menu:find('"title":"Custom…"') and menu:find('"title":"Interpolation"'), "custom + toggle")
-assert(menu:find('"active":true'), "current choice marked")
-assert(not menu:find('"hint":"60 fps"', 1, true), "fixed items have no duplicate hint")
-assert(menu:find('"hint":"RIFE 4.26"', 1, true), "toggle shows running model")
+assert(osd_has(E, "Frame rate") and osd_has(E, "Even on 144 Hz") and osd_has(E, "Interpolation"), "quick menu drawn")
+assert(E.forced["mf-click"] and E.forced["mf-key-ESC"], "menu captures clicks and keys")
+act(E, { kind = "rate", choice = "x3" })
+assert(last_vf(E):find('"num":72000'), "3x applied from the tile: " .. last_vf(E))
+act(E, { kind = "custom" }); act(E, { kind = "key", key = "9" }); act(E, { kind = "key", key = "0" }); act(E, { kind = "key", key = "ENTER" })
+assert(last_vf(E):find('"num":90,'), "custom 90 typed + Enter: " .. last_vf(E))
+eq(E.forced["mf-click"], nil, "menu closed on Enter")
+E.bindings["fps-menu"]()
+act(E, { kind = "toggle" })
+eq(last_vf(E), "vf remove @midframe", "toggle turned interpolation off")
+act(E, { kind = "key", key = "ESC" })
+eq(E.forced["mf-key-ESC"], nil, "Esc closes")
 
--- test_url_prompts: quality before yt-dlp, then frame rate once the fps is known
+-- test_yt_sheet: one sheet at on_preloaded with quality + frame rate; quality switches the video track
 E = make_env({ cal = { ["1920x1080"] = FULL } })
-local hook = { deferred = 0, continued = 0 }
-function hook:defer() self.deferred = self.deferred + 1 end
-function hook:cont() self.continued = self.continued + 1 end
+E.props["osd-dimensions"] = { w = 1440, h = 900 }
+local hook = new_hook()
 E.props["path"] = "https://www.youtube.com/watch?v=abc"
+E.props["media-title"] = "Jailer Climax Scene"
 E.props["display-fps"] = 144
-E.hooks["on_load"](hook)
-eq(hook.deferred, 1, "loading paused for the quality prompt")
-menu = last_cmd(E, "open%-menu")
-assert(menu:find('"title":"Video quality"') and menu:find('"title":"1080p"') and menu:find('"value":"q:1080"'), menu)
-assert(menu:find('"callback":%["midframe","prompt%-event"%]'), "callback mode")
-E.messages["prompt-event"]('{"type":"activate","value":"q:1080","index":4}')
-eq(last_cmd(E, "close%-menu"), "script-message-to uosc close-menu midframe_prompt", "menu closed by us")
-eq(hook.continued, 0, "waits for the close event")
-E.messages["prompt-event"]('{"type":"close"}')
-eq(hook.continued, 1, "loading continues")
-eq(E.set["file-local-options/ytdl-format"], "bestvideo[height<=?1080]+bestaudio/best", "quality applied")
-assert(io.open(PREFS):read("*a"):find('"quality":"1080"'), "quality remembered")
-E.props["track-list"] = { { type = "audio" }, { type = "video", selected = true, ["demux-fps"] = 29.97 } }
+E.props["track-list"] = TRACKS_YT
+E.props["duration"] = 544
 E.hooks["on_preloaded"](hook)
-eq(hook.deferred, 2, "loading paused for the frame-rate prompt")
-menu = last_cmd(E, "open%-menu")
-assert(menu:find('"title":"Frame rate for this video"') and menu:find('"value":"f:x2"'), menu)
-assert(menu:find('"title":"Play original"') and menu:find('"value":"f:off"'), "play original offered")
-assert(menu:find("Source 29.970 fps", 1, true), "footnote has the source fps")
-E.messages["prompt-event"]('{"type":"activate","value":"f:60"}')
-E.messages["prompt-event"]('{"type":"close"}')
-eq(hook.continued, 2, "loading continues after the fps prompt")
+eq(hook.deferred, 1, "loading paused for the sheet")
+eq(E.set["vid"], 2, "Auto quality (up to 1440p) picked the 1080p track before any decode")
+assert(osd_has(E, "QUALITY") and osd_has(E, "Jailer Climax Scene") and osd_has(E, "up to 2160p"), "yt sheet drawn")
+assert(osd_has(E, "Even on your 144 Hz display"), "even group")
+act(E, { kind = "quality", value = "2160" })
+eq(E.set["vid"], 1, "2160p track selected immediately")
+assert(io.open(PREFS):read("*a"):find('"quality":"2160"'), "quality remembered")
+act(E, { kind = "rate", choice = "60" })
+eq(hook.continued, 0, "still waiting for Play")
+act(E, { kind = "play" })
+eq(hook.continued, 1, "loading continues on Play")
+eq(E.forced["mf-click"], nil, "sheet closed")
 play(E, VP, 29.97)
 assert(last_vf(E):find('"num":60,'), "chosen fps used: " .. last_vf(E))
--- same URL reloaded right away (quality switch from uosc): no prompts again
+-- same URL reloaded right away: no sheet again; much later: sheet again
 E.events["end-file"]()
-E.hooks["on_load"](hook); E.hooks["on_preloaded"](hook)
-eq(hook.deferred, 2, "no re-prompt on reload")
--- the same URL opened again much later: ask again
+E.hooks["on_preloaded"](hook)
+eq(hook.deferred, 1, "no re-prompt on reload")
 local real_time = package.loaded["mp"].get_time
 package.loaded["mp"].get_time = function() return 100 end
-E.hooks["on_load"](hook)
-eq(hook.deferred, 3, "re-prompt after a while")
-package.loaded["mp"].get_time = real_time
-E.messages["prompt-event"]('{"type":"close"}')
-
--- test_local_prompts_fps_only, and Escape keeps the previous choice
-E = make_env({ cal = { ["1920x1080"] = FULL } })
-hook = { deferred = 0, continued = 0 }
-function hook:defer() self.deferred = self.deferred + 1 end
-function hook:cont() self.continued = self.continued + 1 end
-E.props["path"] = "D:\\movies\\film.mkv"
-E.props["display-fps"] = 144
-E.hooks["on_load"](hook)
-eq(hook.deferred, 0, "no quality prompt for local files")
-E.props["track-list"] = { { type = "video", ["demux-fps"] = 23.976 } }
 E.hooks["on_preloaded"](hook)
-eq(hook.deferred, 1, "frame-rate prompt")
-E.messages["prompt-event"]('{"type":"close"}')  -- Escape
-eq(hook.continued, 1, "continues on dismiss")
+eq(hook.deferred, 2, "re-prompt after a while")
+package.loaded["mp"].get_time = real_time
+act(E, { kind = "key", key = "ESC" })
+eq(hook.continued, 2, "Esc continues")
+
+-- test_local_sheet: frame rate only; Esc keeps the previous choice; Play original disables; remember toggle persists
+E = make_env({ cal = { ["1920x1080"] = FULL } })
+E.props["osd-dimensions"] = { w = 1440, h = 900 }
+hook = new_hook()
+E.props["path"] = "D:\\movies\\film.mkv"
+E.props["media-title"] = "film"
+E.props["display-fps"] = 144
+E.props["track-list"] = { { type = "video", id = 1, ["demux-fps"] = 23.976, ["demux-w"] = 1920, ["demux-h"] = 1080, codec = "hevc" } }
+E.hooks["on_preloaded"](hook)
+eq(hook.deferred, 1, "local sheet")
+assert(not osd_has(E, "QUALITY"), "no quality section for local files")
+assert(osd_has(E, "1920×1080") and osd_has(E, "HEVC"), "local meta line")
+act(E, { kind = "key", key = "ESC" })
+eq(hook.continued, 1, "continues on Esc")
 play(E, VP, 23.976)
 assert(last_vf(E):find('"num":48000'), "default 2x kept: " .. last_vf(E))
--- "Play original" disables interpolation for this file
-E.messages["prompt-event"]('{"type":"activate","value":"f:off"}')
+E.hooks["on_preloaded"](new_hook())  -- reopened later (different path) to test Play original + remember
+E.props["path"] = "D:\\movies\\other.mkv"
+hook = new_hook()
+E.hooks["on_preloaded"](hook)
+act(E, { kind = "remember" })
+assert(io.open(PREFS):read("*a"):find('"ask_local":false'), "don't ask again persisted")
+act(E, { kind = "original" })
 eq(last_vf(E), "vf remove @midframe", "original playback")
+eq(hook.continued, 1)
+E.props["path"] = "D:\\movies\\third.mkv"
+hook = new_hook()
+E.hooks["on_preloaded"](hook)
+eq(hook.deferred, 0, "no sheet once asked not to")
 
--- test_prompt_timeout: an unanswered prompt continues loading
+-- test_prompt_timeout: an unanswered sheet continues loading
 E = make_env({ cal = { ["1920x1080"] = FULL } })
-hook = { deferred = 0, continued = 0 }
-function hook:defer() self.deferred = self.deferred + 1 end
-function hook:cont() self.continued = self.continued + 1 end
+E.props["osd-dimensions"] = { w = 1440, h = 900 }
+hook = new_hook()
 E.props["path"] = "https://youtu.be/x"
-E.hooks["on_load"](hook)
-E.timers[#E.timers]()  -- the prompt timeout fires
+E.props["track-list"] = TRACKS_YT
+E.hooks["on_preloaded"](hook)
+eq(hook.deferred, 1)
+E.timers[#E.timers]()  -- the sheet timeout fires
 eq(hook.continued, 1, "timeout continues loading")
 
--- test_no_uosc_no_prompts
-E = make_env({ cal = { ["1920x1080"] = FULL }, uosc = false })
-hook = { deferred = 0 }
-function hook:defer() self.deferred = self.deferred + 1 end
-E.props["path"] = "https://youtu.be/x"
-E.hooks["on_load"](hook)
-eq(hook.deferred, 0, "without uosc, never block loading")
-
--- test_idle_click: start screen buttons route to uosc
+-- test_home_actions: open file -> native dialog; recent -> resume; settings -> drawer
 E = make_env({ cal = { ["1920x1080"] = FULL } })
 E.props["idle-active"] = true
-E.props["osd-dimensions"] = { w = 1440, h = 810 }
+E.props["osd-dimensions"] = { w = 1440, h = 900 }
 E.observers["idle-active"]("idle-active", true)
-assert(last_osd(E):find("Drop a video here", 1, true) and last_osd(E):find("RIFE ready", 1, true), "idle drawn")
-assert(E.forced["mf-idle-click"], "click bound while idle")
-local _, boxes = require("overlay").idle(1440, 810, "ready")
-E.props["mouse-pos"] = { x = boxes.paste[1] + 10, y = boxes.paste[2] + 10 }
-E.forced["mf-idle-click"]()
-eq(E.cmds[#E.cmds], "script-binding uosc/paste", "paste clicked")
+assert(osd_has(E, "Drop a video here") and osd_has(E, "RIFE ready"), "home drawn")
+assert(E.forced["mf-click"], "clicks bound on home")
+local n_async = #E.async
+act(E, { kind = "open" })
+assert(#E.async == n_async + 1 and E.async[#E.async].cmd.args[1] == "powershell", "native dialog launched")
+E.async[#E.async].cb(true, { status = 0, stdout = "D:\\Movies\\x.mkv\r\n" })
+eq(E.cmds[#E.cmds], "loadfile D:\\Movies\\x.mkv replace", "picked file loads")
+E.props["clipboard/text"] = "https://youtu.be/abc"
+act(E, { kind = "play_link" })
+eq(E.cmds[#E.cmds], "loadfile https://youtu.be/abc replace", "clipboard link loads")
+act(E, { kind = "settings" })
+assert(osd_has(E, "Settings") and osd_has(E, "BEFORE PLAYBACK"), "settings drawer")
+act(E, { kind = "tab", value = "engines" })
+assert(osd_has(E, "All 4 levels measured"), "engines tab shows the 1080p calibration")
+act(E, { kind = "prepare", w = 3840, h = 2160 })
+eq(build_args(E, 1), ENGINES .. " 3840 2160", "Prepare now builds that size")
+act(E, { kind = "tab", value = "playback" })
+act(E, { kind = "cycle", key = "choice" })
+assert(io.open(PREFS):read("*a"):find('"choice":"x2.5"'), "default rate cycles and persists")
+act(E, { kind = "key", key = "ESC" })
+assert(osd_has(E, "Drop a video here"), "back to home after settings")
 E.props["idle-active"] = false
 E.observers["idle-active"]("idle-active", false)
-eq(E.forced["mf-idle-click"], nil, "click unbound when playing")
+eq(E.forced["mf-click"], nil, "home unbound when playing")
+
+-- test_recents: a played file is remembered with its title and resumes from its position
+E = make_env({ cal = { ["1920x1080"] = FULL } })
+os.remove("portable_config/midframe-recent.json")
+E = make_env({ cal = { ["1920x1080"] = FULL } })
+E.props["path"] = "D:\\Movies\\Sinners.mkv"; E.props["media-title"] = "Sinners (2025)"; E.props["duration"] = 8260; E.props["time-pos"] = 3100
+E.events["file-loaded"]()
+play(E, VP, 23.976)
+E.events["shutdown"]()  -- position saved on the 5 s timer / at exit
+local rec = io.open("portable_config/midframe-recent.json"):read("*a")
+assert(rec:find("Sinners %(2025%)") and rec:find('"fps":"23.976"'), rec)
+E.props["path"] = nil
+E.props["idle-active"] = true; E.props["osd-dimensions"] = { w = 1440, h = 900 }
+E.observers["idle-active"]("idle-active", true)
+assert(osd_has(E, "Sinners (2025)"), "recent card on home")
+act(E, { kind = "recent", index = 1 })
+assert(E.cmds[#E.cmds]:find("^loadfile D:\\Movies\\Sinners%.mkv replace start=%d"), E.cmds[#E.cmds])
+os.remove("portable_config/midframe-recent.json")
 
 -- test_waits_for_stream_fps: no filter until the real fps is known, then re-plans when it changes
 E = make_env({ cal = { ["1920x1080"] = FULL } })

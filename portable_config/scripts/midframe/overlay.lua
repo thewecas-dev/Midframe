@@ -1,160 +1,90 @@
--- Debug overlay: ASS text rows + small area graphs. Pure, no mp.
+-- Debug overlay (top-right panel) and notice toast. Pure, no mp.
+local ui = require "ui"
+local C = ui.C
 local M = {}
 
-local function num(v)
-    if math.abs(v - math.floor(v + 0.5)) < 1e-9 then return string.format("%d", math.floor(v + 0.5)) end
-    return string.format("%.1f", v)
-end
-
--- Filled area path for samples inside the box (x, y, w, h); values clamped to [0, vmax].
-function M.graph(samples, x, y, w, h, vmax)
-    local n = #samples
-    if n < 2 then return "" end
-    local parts = { "m " .. num(x) .. " " .. num(y + h) }
-    for i, v in ipairs(samples) do
-        local f = vmax > 0 and math.max(0, math.min(v, vmax)) / vmax or 0
-        parts[#parts + 1] = "l " .. num(x + (i - 1) * w / (n - 1)) .. " " .. num(y + h - f * h)
-    end
-    parts[#parts + 1] = "l " .. num(x + w) .. " " .. num(y + h)
-    return table.concat(parts, " ")
-end
-
 local function q(v, f) if v == nil then return "?" end return string.format(f or "%s", v) end
-
 local function maxof(t, floor)
     local m = floor
     for _, v in ipairs(t) do if v > m then m = v end end
     return m
 end
 
-local W, GH = 360, 36  -- panel width, graph height
-local GRAPHS = {
-    { key = "real_fps", label = "real fps", color = "&H66FF66&" },
-    { key = "drops", label = "dropped/s", color = "&H6666FF&" },
-    { key = "vram", label = "VRAM MB", color = "&HFFCC66&" },
-}
-
-function M.render(st)
-    local h = st.hist
-    local rows = {
-        -- measured display rate far from the nominal one = variable refresh (Windows "Dynamic" rate or G-SYNC)
-        string.format("src %s @ %s → target %s | real %s | display %s Hz (measured %s)", q(st.src_res),
-            st.src_fps and string.format("%.3f", st.src_fps) or "?", q(st.target_fps, "%.3f"),
-            q(st.real_fps, "%.1f"), q(st.display_fps, "%.0f"), q(st.measured_display_fps, "%.1f")),
-        string.format("%s · %s · level %s/%s", q(st.level_label), q(st.backend), q(st.auto_level), q(st.auto_total)),
-        string.format("dropped %s · late %s · VRAM %s MB · seek %s ms", q(st.drops), q(st.delayed), q(st.vram_mb),
-            q(st.seek_ms)),
-        -- A laptop GPU parked in P5 at a few hundred MHz is the usual reason for drops with headroom to spare.
-        string.format("GPU clock %s / %s MHz · %s%s", q(st.gpu_mhz), q(st.gpu_max_mhz), q(st.gpu_pstate),
-            (st.gpu_mhz and st.gpu_max_mhz and st.gpu_mhz < st.gpu_max_mhz * 0.5) and "  ← power-saving, see README" or ""),
-    }
-    local top = 8 + #rows * 18 + 6
-    local height = top + #GRAPHS * (GH + 16)
-    local X = (st.res_w or W) - W  -- panel sits in the top-right corner
-    local ev = {
-        string.format("{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H60&\\p1}%s{\\p0}", M.rrect(X + 4, 4, W - 8, height - 4, 10)),
-        string.format("{\\an7\\pos(%d,10)\\fs14\\bord0\\shad0\\1c&HF7F4F2&\\fnConsolas}", X + 14) .. table.concat(rows, "\\N"),
-    }
-    for i, g in ipairs(GRAPHS) do
-        local y = top + (i - 1) * (GH + 16)
-        local samples = h[g.key] or {}
-        local vmax = g.key == "real_fps" and (st.target_fps or 60) * 1.2 or maxof(samples, 1) * 1.1
-        ev[#ev + 1] = string.format("{\\an7\\pos(%d,%d)\\fs11\\bord0\\shad0\\1c&HCCCCCC&}%s (max %s)", X + 10, y, g.label,
-            num(maxof(samples, 0)))
-        local path = M.graph(samples, X + 10, y + 13, W - 20, GH, vmax)
-        if path ~= "" then
-            ev[#ev + 1] = string.format("{\\an7\\pos(0,0)\\bord0\\shad0\\1c%s\\1a&H40&\\p1}%s{\\p0}", g.color, path)
-        end
+-- Filled area path for samples inside the box (x, y, w, h); values clamped to [0, vmax].
+function M.graph(samples, x, y, w, h, vmax)
+    local n = #samples
+    if n < 2 then return "" end
+    local parts = { "m " .. ui.num(x) .. " " .. ui.num(y + h) }
+    for i, v in ipairs(samples) do
+        local f = vmax > 0 and math.max(0, math.min(v, vmax)) / vmax or 0
+        parts[#parts + 1] = "l " .. ui.num(x + (i - 1) * w / (n - 1)) .. " " .. ui.num(y + h - f * h)
     end
-    return table.concat(ev, "\n")
+    parts[#parts + 1] = "l " .. ui.num(x + w) .. " " .. ui.num(y + h)
+    return table.concat(parts, " ")
 end
 
--- Theme (ASS colours are BGR), matching the Figma tokens.
-local C = {
-    accent = "&HFF6C8B&", surface = "&H1B1614&", raised = "&H27201D&", border = "&H382F2A&",
-    text = "&HF7F4F2&", muted = "&HAFA39A&", good = "&H97DC3D&", warn = "&H20B0FF&", bad = "&H6C5CFF&",
+local PW, GH = 360, 36
+local GRAPHS = {
+    { key = "real_fps", label = "real fps", color = C.good },
+    { key = "drops", label = "dropped / s", color = C.bad },
+    { key = "vram", label = "VRAM MB", color = C.accent },
 }
-M.C = C
 
-local function ulen(s) return select(2, s:gsub("[^\128-\191]", "")) end
-
--- Rounded rectangle drawing path.
-function M.rrect(x, y, w, h, r)
-    r = math.min(r, w / 2, h / 2)
-    local x2, y2 = x + w, y + h
-    return table.concat({
-        "m", num(x + r), num(y), "l", num(x2 - r), num(y), "b", num(x2), num(y), num(x2), num(y), num(x2), num(y + r),
-        "l", num(x2), num(y2 - r), "b", num(x2), num(y2), num(x2), num(y2), num(x2 - r), num(y2),
-        "l", num(x + r), num(y2), "b", num(x), num(y2), num(x), num(y2), num(x), num(y2 - r),
-        "l", num(x), num(y + r), "b", num(x), num(y), num(x), num(y), num(x + r), num(y),
-    }, " ")
+-- st: see main.lua draw(). res_w: canvas width in design units.
+function M.render(st)
+    local W = st.res_w or ui.W
+    local c = ui.canvas(W, st.res_h or ui.H)
+    local x0, y0 = W - PW - 20, 76
+    local rows = {
+        { "source", string.format("%s · %s", q(st.src_res), st.src_fps and string.format("%.3f", st.src_fps) or "?") },
+        { "target", string.format("%s · real %s", q(st.target_fps, "%.3f"), q(st.real_fps, "%.1f")) },
+        { "level", string.format("%s/%s · %s · %s", q(st.auto_level), q(st.auto_total), q(st.level_label), q(st.backend)) },
+        { "dropped", string.format("%s · late %s · seek %s ms", q(st.drops), q(st.delayed), q(st.seek_ms)) },
+        { "gpu", string.format("%s / %s MHz · %s · %s MB", q(st.gpu_mhz), q(st.gpu_max_mhz), q(st.gpu_pstate), q(st.vram_mb)) },
+        { "display", string.format("%s Hz · measured %s", q(st.display_fps, "%.0f"), q(st.measured_display_fps, "%.1f")) },
+    }
+    local low_clock = st.gpu_mhz and st.gpu_max_mhz and st.gpu_mhz < st.gpu_max_mhz * 0.5
+    local vrr = st.display_fps and st.measured_display_fps and math.abs(st.display_fps - st.measured_display_fps) > 2
+    local h = 12 + 16 + 10 + #rows * 15 + 10 + #GRAPHS * (GH + 18) + 6
+    c:rect(x0, y0, PW, h, 12, C.black, 0x58, C.white, 1)
+    c:text(x0 + 14, y0 + 18, 4, 10, C.muted, "DEBUG", { bold = true })
+    c:text(x0 + PW - 14, y0 + 18, 6, 10, C.faint, "D to hide")
+    local y = y0 + 12 + 16 + 10
+    for _, r in ipairs(rows) do
+        local tone = C.text
+        if r[1] == "gpu" and low_clock then tone = C.warn end
+        if r[1] == "display" then tone = vrr and C.warn or C.good end
+        c:text(x0 + 14, y + 7, 4, 11, C.muted, r[1], { font = ui.MONO })
+        c:text(x0 + 110, y + 7, 4, 11, tone, r[2], { font = ui.MONO })
+        y = y + 15
+    end
+    if low_clock then c:text(x0 + 110, y + 4, 4, 10, C.warn, "GPU parked in power saving, see README"); y = y + 14 end
+    if vrr then c:text(x0 + 110, y + 4, 4, 10, C.warn, "variable refresh: turn off G-SYNC / Dynamic rate"); y = y + 14 end
+    y = y + 10
+    for _, g in ipairs(GRAPHS) do
+        local samples = (st.hist or {})[g.key] or {}
+        local vmax = g.key == "real_fps" and (st.target_fps or 60) * 1.2 or maxof(samples, 1) * 1.1
+        c:text(x0 + 14, y + 5, 4, 10, C.muted, g.label .. " (max " .. ui.num(maxof(samples, 0)) .. ")")
+        c:rect(x0 + 14, y + 13, PW - 28, GH, 4, C.white, 0xF0)
+        local path = M.graph(samples, x0 + 14, y + 13, PW - 28, GH, vmax)
+        if path ~= "" then c:shape(path, g.color, 0x50) end
+        y = y + GH + 18
+    end
+    return c:render()
 end
 
-local function shape(path, fill, alpha, border)
-    local b = border and ("\\bord1\\3c" .. border) or "\\bord0"
-    return string.format("{\\an7\\pos(0,0)%s\\shad0\\1c%s\\1a&H%02X&\\p1}%s{\\p0}", b, fill, alpha or 0, path)
-end
-
-local function label(x, y, an, size, color, txt, bold)
-    return string.format("{\\an%d\\pos(%s,%s)\\fs%d\\bord0\\shad0\\b%d\\1c%s}%s", an, num(x), num(y), size,
-        bold and 1 or 0, color, txt)
-end
-
--- Top-center notice pill. kind: "info" | "warn" | "good" | "bad".
+-- Top-centre notice. kind: "info" | "warn" | "good" | "bad". w: canvas width in design units.
 function M.toast(w, txt, kind)
-    local fs, h = 16, 40
-    txt = txt:gsub("[%c]", " ")  -- stray \r etc. render as boxes
-    local max = math.floor((w - 120) / (fs * 0.54))
-    if ulen(txt) > max then txt = txt:sub(1, max - 1):gsub("[\192-\255][\128-\191]*$", "") .. "…" end
-    local tw = math.floor(ulen(txt) * fs * 0.54 + 52)
-    local x, y = math.floor((w - tw) / 2), 24
-    local dot = ({ info = C.accent, warn = C.warn, good = C.good, bad = C.bad })[kind] or C.accent
-    return table.concat({
-        shape(M.rrect(x, y, tw, h, 12), C.surface, 0x10, C.border),
-        shape(M.rrect(x + 16, y + 15, 10, 10, 5), dot),
-        label(x + 36, y + h / 2, 4, fs, C.text, txt),
-    }, "\n")
+    local c = ui.canvas(w, ui.H)
+    txt = tostring(txt):gsub("[%c]", " ")
+    txt = ui.fit(txt, 13, w - 160)
+    local tw = ui.textw(txt, 13) + 54
+    local x, y = math.floor((w - tw) / 2), 84
+    c:shadow(x, y, tw, 40, 10, 10)
+    c:rect(x, y, tw, 40, 10, C.surface, 0x10, C.border_strong, 1)
+    c:circle(x + 20, y + 20, 4, C[({ info = "accent", warn = "warn", good = "good", bad = "bad" })[kind] or "accent"])
+    c:text(x + 34, y + 20, 4, 13, C.text, txt, { bold = true })
+    return c:render()
 end
-
--- Idle start screen. engine: "ready" | "building" | "missing". Returns ASS and click boxes.
-function M.idle(w, h, engine)
-    local cw, ch = 600, 270
-    local cx, cy = math.floor((w - cw) / 2), math.floor((h - ch) / 2) - 20
-    local mid = cx + cw / 2
-    local bw, bh, gap = 190, 46, 14
-    local b1x, by = mid - bw - gap / 2, cy + 180
-    local b2x = mid + gap / 2
-    local status = ({
-        ready = { C.good, "RIFE ready · TensorRT" },
-        building = { C.warn, "Preparing RIFE (first run, several minutes)…" },
-        missing = { C.warn, "RIFE not prepared yet" },
-    })[engine] or { C.muted, "RIFE status unknown" }
-    local sw = math.floor(ulen(status[2]) * 13 * 0.54 + 44)
-    local sx, sy = math.floor((w - sw) / 2), h - 64
-    local arrow = string.format("m %s %s l %s %s l %s %s l %s %s l %s %s l %s %s l %s %s l %s %s l %s %s",
-        num(mid - 3), num(cy + 34), num(mid + 3), num(cy + 34), num(mid + 3), num(cy + 54), num(mid + 10), num(cy + 47),
-        num(mid + 14), num(cy + 51), num(mid), num(cy + 65), num(mid - 14), num(cy + 51), num(mid - 10), num(cy + 47),
-        num(mid - 3), num(cy + 54))
-    local ev = {
-        shape(M.rrect(cx, cy, cw, ch, 20), C.surface, 0x18, C.border),
-        shape(arrow, C.text),
-        shape(M.rrect(mid - 18, cy + 72, 36, 4, 2), C.text),
-        label(mid, cy + 112, 5, 28, C.text, "Drop a video here", true),
-        label(mid, cy + 148, 5, 16, C.muted, "Local files or a YouTube link — streamed, never downloaded"),
-        shape(M.rrect(b1x, by, bw, bh, 10), C.accent),
-        label(b1x + bw / 2, by + bh / 2, 5, 16, C.text, "Open file   {\\b0\\alpha&H50&}Ctrl+O", true),
-        shape(M.rrect(b2x, by, bw, bh, 10), C.raised),
-        label(b2x + bw / 2, by + bh / 2, 5, 16, C.text, "Paste link   {\\b0\\1c" .. C.muted .. "}Ctrl+V", true),
-        shape(M.rrect(sx, sy, sw, 32, 16), C.surface),
-        shape(M.rrect(sx + 14, sy + 12, 8, 8, 4), status[1]),
-        label(sx + 30, sy + 16, 4, 13, C.muted, status[2]),
-    }
-    return table.concat(ev, "\n"), {
-        open = { b1x, by, b1x + bw, by + bh },
-        paste = { b2x, by, b2x + bw, by + bh },
-    }
-end
-
-function M.hit(box, x, y) return box ~= nil and x >= box[1] and x <= box[3] and y >= box[2] and y <= box[4] end
 
 return M

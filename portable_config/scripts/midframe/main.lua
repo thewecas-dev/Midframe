@@ -1,19 +1,23 @@
--- Midframe (script id "midframe"): wires RIFE interpolation (vs/rife.vpy) into mpv with before-playback prompts
--- (YouTube quality, frame rate), per-resolution TensorRT engines built on demand, auto step-down,
--- failure fallback, crash-resume state, start screen, notices and a debug overlay.
+-- Midframe (script id "midframe"): wires RIFE interpolation (vs/rife.vpy) into mpv with the UI v2 surfaces
+-- (home, setup sheet, fps quick menu, settings, debug overlay), per-resolution TensorRT engines built on demand,
+-- auto step-down, failure fallback and crash-resume state.
 local mp = require "mp"
 local utils = require "mp.utils"
 local msg = require "mp.msg"
 local input = require "mp.input"
 local fps = require "fps"
 local auto = require "auto"
+local ui = require "ui"
 local overlay = require "overlay"
+local sheet = require "sheet"
+local home = require "home"
+local settings = require "settings"
 
 local o = {
     enabled = true,
     choice = "x2",       -- default frame-rate choice (overridden by the last pick, see PREFS)
     quality = "auto",    -- default YouTube quality: auto | 2160 | 1440 | 1080 | 720 | 480
-    ask = true,          -- ask quality/frame rate before each video starts
+    ask = true,          -- ask quality/frame rate before each video starts (per kind in PREFS)
     anime = true,
     python = "~~exe_dir/vs-runtime/python.exe",
     engines = "~~/engines",
@@ -22,16 +26,20 @@ require("mp.options").read_options(o, "midframe")
 
 local function expand(p) return mp.command_native({ "expand-path", p }) end
 
+local VERSION = "0.2.0"
 local VPY = expand("~~/vs/rife.vpy")
 local BUILDER = expand("~~/vs/build_engines.py")
 local ENGINES = expand(o.engines)
 local STATE_FILE = expand("~~/midframe-last.json")
 local PREFS = expand("~~/midframe-prefs.json")
+local RECENT = expand("~~/midframe-recent.json")
 local ERROR_LOG = expand("~~/midframe-error.log")
 local REF_W, REF_H = 1920, 1080  -- reference size: every level is built + measured here at setup
-local PROMPT_TIMEOUT = 90        -- seconds before an unanswered prompt lets playback continue
-local QUALITIES = { "auto", "2160", "1440", "1080", "720", "480" }
-local AUTO_MAX_HEIGHT = 1440
+local PROMPT_TIMEOUT = 120       -- seconds before an unanswered sheet lets playback continue
+local SIZES = { { "720p", 1280, 720 }, { "1080p", 1920, 1080 }, { "1440p", 2560, 1440 }, { "4K", 3840, 2160 } }
+local QUALITY_SIZE = { ["2160"] = { 3840, 2160 }, ["1440"] = { 2560, 1440 }, ["1080"] = { 1920, 1080 }, ["720"] = { 1280, 720 }, ["480"] = { 854, 480 } }
+local CHOICES = { "x1.5", "x2", "x2.5", "x3", "60", "72", "90", "120", "144" }
+local HEADROOMS = { 1.2, 1.5, 2 }
 
 local function read_json(path)
     local f = io.open(path, "r")
@@ -50,28 +58,42 @@ end
 local LADDER = assert(read_json(expand("~~/vs/ladder.json")), "midframe: vs/ladder.json missing")
 local MATRIX = { ["bt.709"] = "709", ["bt.601"] = "170m", ["bt.2020-ncl"] = "2020ncl" }
 local prefs = read_json(PREFS) or {}
+local function pref(k, default) if prefs[k] == nil then return default end return prefs[k] end
 
 local S = {
-    enabled = o.enabled, choice = prefs.choice or o.choice, quality = prefs.quality or o.quality,
+    enabled = o.enabled, choice = pref("choice", o.choice), quality = pref("quality", o.quality),
+    ask_yt = pref("ask_yt", o.ask), ask_local = pref("ask_local", o.ask), anime = pref("anime", o.anime),
+    even = pref("even", true), headroom = pref("headroom", auto.HEADROOM), audio_delay = pref("audio_delay", 0),
     added = false, debug = false, builds = {}, building = nil,
-    uosc = utils.file_info(expand("~~/scripts/uosc/main.lua")) ~= nil,
     hist = { real_fps = {}, drops = {}, vram = {} },
+    recents = read_json(RECENT) or {},
+    checks = {},  -- gpu_pref = true|false|nil, refresh = true|false|nil
 }
+auto.HEADROOM = S.headroom
 
-local function save_prefs() write_json(PREFS, { choice = S.choice, quality = S.quality }) end
+local function save_prefs()
+    write_json(PREFS, { choice = S.choice, quality = S.quality, ask_yt = S.ask_yt, ask_local = S.ask_local,
+        anime = S.anime, even = S.even, headroom = S.headroom, audio_delay = S.audio_delay })
+end
 
 local function osd_size()
     local d = mp.get_property_native("osd-dimensions") or {}
     return (d.w and d.w > 0) and d.w or 1280, (d.h and d.h > 0) and d.h or 720
 end
+-- Everything is drawn in design units (1440x900) and scaled to the window through the overlay resolution.
+local function design_size()
+    local w, h = osd_size()
+    local s = math.max(0.6, math.min(1.5, math.min(w / ui.W, h / ui.H)))
+    return math.floor(w / s + 0.5), math.floor(h / s + 0.5), s
+end
 
--- Notices: one styled pill at the top centre (replaces mpv's plain OSD text).
+-- Notices: one styled pill at the top centre.
 local ov_toast = mp.create_osd_overlay("ass-events")
 local toast_timer
 local function notice(text, secs, kind)
-    local w, h = osd_size()
-    ov_toast.res_x, ov_toast.res_y = w, h
-    ov_toast.data = overlay.toast(w, text, kind)
+    local W, H = design_size()
+    ov_toast.res_x, ov_toast.res_y = W, H
+    ov_toast.data = overlay.toast(W, text, kind)
     ov_toast:update()
     if toast_timer then toast_timer:kill() end
     toast_timer = mp.add_timeout(secs or 4, function() ov_toast:remove() end)
@@ -93,11 +115,8 @@ local function cal(w, h)
     end
     return out
 end
-local function ref_ready()
-    local r = cal(REF_W, REF_H)
-    for i = 1, #LADDER do if not r[i] then return false end end
-    return true
-end
+local function cal_count(w, h) local n = 0 for _ in pairs(cal(w, h)) do n = n + 1 end return n end
+local function ref_ready() return cal_count(REF_W, REF_H) >= #LADDER end
 
 local function video_size()
     local vp = mp.get_property_native("video-params") or {}
@@ -117,20 +136,28 @@ local function target()
 end
 
 local function size_label(w, h) return w .. "×" .. h end
+local function is_url(p) return p ~= nil and (p:find("^https?://") or p:find("^ytdl://")) ~= nil end
+local function cap() return fps.cap(mp.get_property_number("display-fps")) end
 
--- Keep uosc's FPS / debug buttons and the top-bar status line in sync.
+local function set_button(name, t) mp.commandv("script-message-to", "uosc", "set-button", name, utils.format_json(t)) end
+
+-- Keep uosc's buttons and the top-bar status line in sync.
 local function sync_ui()
     local t, lv = target()
     local src = S.src_num and fps.fmt(S.src_num / S.src_den)
-    local tip = t and ("Frame rate: " .. src .. " → " .. fps.fmt(t) .. " fps (F)") or "Frame rate (F)"
-    mp.commandv("script-message-to", "uosc", "set-button", "midframe_fps", utils.format_json({
+    set_button("midframe_fps", {
         icon = "bolt", active = t ~= nil, badge = t and string.format("%d", math.floor(t + 0.5)) or nil,
-        tooltip = tip, command = "script-binding midframe/fps-menu",
-    }))
-    mp.commandv("script-message-to", "uosc", "set-button", "midframe_debug", utils.format_json({
-        icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding midframe/debug",
-    }))
+        tooltip = t and ("Frame rate: " .. src .. " → " .. fps.fmt(t) .. " fps (F)") or "Frame rate (F)",
+        command = "script-binding midframe/fps-menu",
+    })
     local w, h = video_size()
+    set_button("midframe_quality", {
+        icon = "high_quality", badge = h and (h .. "p") or nil, tooltip = "Quality and frame rate",
+        command = "script-binding midframe/setup",
+    })
+    set_button("midframe_debug", { icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding midframe/debug" })
+    set_button("midframe_settings", { icon = "settings", tooltip = "Settings (Ctrl+,)", command = "script-binding midframe/settings" })
+    set_button("midframe_play", { icon = mp.get_property_bool("pause") and "play_arrow" or "pause", tooltip = "Play / pause (Space)", command = "cycle pause" })
     local status = ""
     if w and src then
         status = size_label(w, h) .. " · " .. src .. " fps"
@@ -145,7 +172,7 @@ local function sync_ui()
     mp.set_property_native("user-data/midframe/status", status)
 end
 
-local apply, draw_idle, retarget
+local apply, draw_home, retarget, modal_redraw
 
 -- Engine builds run one at a time in a subprocess (minutes each); playback stays plain meanwhile.
 local function start_build(job)
@@ -157,8 +184,7 @@ local function start_build(job)
         return
     end
     S.building = job
-    if draw_idle then draw_idle() end
-    sync_ui()
+    draw_home(); modal_redraw(); sync_ui()
     local args = { expand(o.python), BUILDER, ENGINES, tostring(job.w), tostring(job.h) }
     if job.level then args[#args + 1] = tostring(job.level) end
     mp.command_native_async({
@@ -175,7 +201,7 @@ local function start_build(job)
             if f then f:write(full); f:close() end
             notice("RIFE setup failed (details: portable_config\\engines\\build-error.log): " .. err, 10, "bad")
         end
-        draw_idle()
+        draw_home(); modal_redraw()
         local nxt = table.remove(S.builds, 1)
         if nxt then start_build(nxt) else retarget() end  -- GPU free again: plan from the new calibration
         sync_ui()
@@ -207,7 +233,7 @@ apply = function()
     end
     local step = S.fps_steps[lv.fps]
     local json = utils.format_json({
-        num = step.num, den = step.den, level = lv.rife, anime = o.anime,
+        num = step.num, den = step.den, level = lv.rife, anime = S.anime,
         engines = ENGINES, matrix = S.matrix, range = S.range,
     })
     S.added = true
@@ -218,7 +244,7 @@ end
 
 retarget = function()
     if not S.src_num then return end
-    local tn, td, err = fps.resolve(S.choice, S.src_num, S.src_den, fps.cap(mp.get_property_number("display-fps")))
+    local tn, td, err = fps.resolve(S.choice, S.src_num, S.src_den, cap())
     if not tn then
         msg.info("no interpolation: " .. err)
         S.levels = nil
@@ -237,6 +263,38 @@ retarget = function()
     apply()
 end
 
+-- ---------- recents ----------
+local function save_recents() write_json(RECENT, S.recents) end
+local function recent_upsert(path, fields)
+    if not path then return end
+    local r
+    for i, x in ipairs(S.recents) do if x.path == path then r = table.remove(S.recents, i); break end end
+    r = r or { path = path }
+    for k, v in pairs(fields) do r[k] = v end
+    table.insert(S.recents, 1, r)
+    while #S.recents > 12 do table.remove(S.recents) end
+    save_recents()
+end
+local function join(parts, sep)  -- table.concat that skips nils
+    local out = {}
+    for i = 1, 8 do if parts[i] then out[#out + 1] = parts[i] end end
+    return table.concat(out, sep or " · ")
+end
+local function fmt_dur(sec)
+    if not sec or sec <= 0 then return nil end
+    sec = math.floor(sec + 0.5)
+    local h, m = math.floor(sec / 3600), math.floor(sec % 3600 / 60)
+    if h > 0 then return string.format("%dh %02dm", h, m) end
+    return string.format("%dm %02ds", m, sec % 60)
+end
+local function recent_meta(r)
+    local where = is_url(r.path) and (r.path:match("^https?://([^/]+)") or "link"):gsub("^www%.", "") or (r.path:match("^(.*)[/\\]") or "")
+    local parts = { ui.fit(where, 11, 160) }
+    if r.duration then parts[#parts + 1] = fmt_dur(r.duration) end
+    if r.fps then parts[#parts + 1] = r.fps .. " fps" end
+    return table.concat(parts, " · ")
+end
+
 -- Set up once decoder params AND the real source fps are known; redo it if either changes
 -- (streams often report fps a moment after playback starts, and may switch resolution).
 local function try_setup()
@@ -247,6 +305,7 @@ local function try_setup()
     S.src_num, S.src_den, S.w, S.h = n, d, vp.w, vp.h
     S.matrix = MATRIX[vp.colormatrix] or (vp.h and vp.h <= 576 and "170m" or "709")
     S.range = (vp.colorlevels == "full" or vp.colorlevels == "pc") and "full" or "limited"
+    recent_upsert(mp.get_property("path"), { fps = fps.fmt(n / d) })
     retarget()
 end
 mp.observe_property("video-params", "native", try_setup)
@@ -258,7 +317,14 @@ mp.register_event("end-file", function()
     S.enabled = o.enabled  -- a failure only disables interpolation for the file it happened on
     sync_ui()
 end)
-mp.register_script_message("uosc-version", function() S.uosc = true; sync_ui() end)
+mp.register_event("file-loaded", function()
+    local path = mp.get_property("path")
+    recent_upsert(path, { title = mp.get_property("media-title") or path, duration = mp.get_property_number("duration") })
+    mp.set_property_number("audio-delay", (S.audio_delay or 0) / 1000)
+    sync_ui()
+end)
+mp.observe_property("pause", "bool", function() sync_ui() end)
+mp.register_script_message("uosc-version", function() sync_ui() end)
 
 -- Any filter error: turn interpolation off, keep playing. The full traceback goes to ERROR_LOG.
 mp.enable_messages("error")
@@ -294,8 +360,8 @@ local function push(t, v)
     if #t > 120 then table.remove(t, 1) end
 end
 
--- Auto mode + overlay history, once a second.
-local last_drops = 0
+-- Auto mode + overlay history + display check, once a second.
+local last_drops, playing_since = 0, nil
 mp.add_periodic_timer(1, function()
     local drops = mp.get_property_number("frame-drop-count", 0)
     local delayed = mp.get_property_number("vo-delayed-frame-count", 0)
@@ -305,6 +371,17 @@ mp.add_periodic_timer(1, function()
     S.real_fps = vf_fps and math.max(0, vf_fps - dps)
     push(S.hist.real_fps, S.real_fps or 0)
     push(S.hist.drops, dps)
+    -- refresh-rate check: the measured vsync rate should sit on the nominal one once playback has settled
+    if mp.get_property("path") and not mp.get_property_bool("pause") then
+        playing_since = playing_since or mp.get_time()
+        local nominal, measured = mp.get_property_number("display-fps"), mp.get_property_number("estimated-display-fps")
+        if nominal and measured and measured > 1 and mp.get_time() - playing_since > 8 then
+            S.checks.refresh = math.abs(nominal - measured) < 2
+            S.checks.refresh_detail = string.format("%.0f Hz nominal, %.1f measured", nominal, measured)
+        end
+    else
+        playing_since = nil
+    end
 
     local t = target()
     if not t or mp.get_property_bool("pause") then return end
@@ -314,21 +391,25 @@ mp.add_periodic_timer(1, function()
     if lv.off then
         notice("Too heavy for real-time: playing original fps", 5, "warn")
     else
-        notice("Auto: stepped down to " .. LADDER[lv.rife].label .. " to stay smooth", 4, "warn")
+        notice("Stepped down to " .. LADDER[lv.rife].label .. " to stay smooth", 4, "warn")
     end
     apply()
 end)
 
--- Crash-resume state for the launcher.
+-- Crash-resume state for the launcher + resume position for recents.
 local function save_state()
     local path = mp.get_property("path")
     if not path then return end
-    write_json(STATE_FILE, { path = path, pos = mp.get_property_number("time-pos", 0) })
+    local pos = mp.get_property_number("time-pos", 0)
+    write_json(STATE_FILE, { path = path, pos = pos })
+    for _, r in ipairs(S.recents) do
+        if r.path == path then r.pos, r.duration = pos, mp.get_property_number("duration") or r.duration; save_recents(); break end
+    end
 end
 mp.add_periodic_timer(5, save_state)
 mp.register_event("shutdown", save_state)
 
--- Frame-rate choice (from the prompt, the F menu or a script message). "off" = play original.
+-- Frame-rate choice (from the sheet, the quick menu or a script message). "off" = play original.
 local function set_choice(choice, quiet)
     if choice == "off" then
         S.enabled = false
@@ -351,160 +432,448 @@ mp.register_script_message("set-fps", function(choice) set_choice(choice) end)
 mp.register_script_message("toggle", function()
     if S.enabled then set_choice("off") else set_choice(S.choice) end
 end)
-mp.register_script_message("fps-custom", function()
-    input.get({
-        prompt = "Target fps:",
-        submit = function(text)
-            local n, _, err = fps.resolve(text, S.src_num, S.src_den, fps.cap(mp.get_property_number("display-fps")))
-            input.terminate()
-            if n then set_choice(text) else notice("Invalid fps: " .. err, 4, "bad") end
-        end,
-    })
-end)
 
-local function header(title) return { title = title, value = "ignore", muted = true, bold = true, selectable = false } end
-
--- Menu rows shared by the before-playback prompt and the F menu. `val(choice)` makes each row's value.
-local function fps_items(src_num, src_den, cap, val)
-    local items = { header("Multiply") }
-    local fixed_started = false
-    for _, op in ipairs(fps.options(src_num, src_den, cap)) do
-        local is_fixed = op.choice:sub(1, 1) ~= "x"
-        if is_fixed and not fixed_started then
-            items[#items + 1] = header("Fixed")
-            fixed_started = true
-        end
-        local t = op.num / op.den
-        items[#items + 1] = {
-            title = is_fixed and (op.choice .. " fps") or (op.choice:sub(2) .. "×"),
-            hint = (not is_fixed and fps.fmt(t) .. " fps") or (math.abs(t - cap) < 0.5 and "matches display") or nil,
-            value = val(op.choice),
-            active = S.enabled and op.choice == S.choice or nil,
-        }
+-- ---------- quality (YouTube formats are loaded as tracks: ytdl_hook-all_formats=yes) ----------
+local function video_tracks()
+    local out = {}
+    for _, t in ipairs(mp.get_property_native("track-list") or {}) do
+        if t.type == "video" then out[#out + 1] = t end
     end
-    return items
+    return out
 end
+local function height_of(t) return t["demux-h"] or 0 end
+-- Pick the track for a quality value: highest height <= wanted (auto = AUTO_MAX_HEIGHT), else the lowest.
+local function track_for(q)
+    local want = q == "auto" and sheet.AUTO_MAX_HEIGHT or tonumber(q)
+    local best, lowest
+    for _, t in ipairs(video_tracks()) do
+        local h = height_of(t)
+        if h <= want + 20 and (not best or h > height_of(best)) then best = t end
+        if not lowest or h < height_of(lowest) then lowest = t end
+    end
+    return best or lowest
+end
+local function available_qualities()
+    local hs = {}
+    for _, t in ipairs(video_tracks()) do hs[#hs + 1] = height_of(t) end
+    local items = {}
+    for _, q in ipairs(sheet.QUALITIES) do
+        local ok = q.value == "auto"
+        for _, h in ipairs(hs) do if math.abs(h - (tonumber(q.value) or 0)) <= (tonumber(q.value) or 0) * 0.12 then ok = true end end
+        items[#items + 1] = { value = q.value, label = q.label, muted = not ok }
+    end
+    local max = 0
+    for _, h in ipairs(hs) do max = math.max(max, h) end
+    return items, max
+end
+local function apply_quality()
+    local t = track_for(S.quality)
+    if t and #video_tracks() > 1 then mp.set_property_number("vid", t.id) end
+end
+
+-- ---------- modal overlays (one at a time): home | sheet | quick | settings ----------
+local Modal = { ov = mp.create_osd_overlay("ass-events"), kind = nil, scale = 1, canvas = nil }
+local KEYS = { "ESC", "ENTER", "KP_ENTER", "BS", "LEFT", "RIGHT", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "KP_DEC" }
+local handle_action  -- forward
+local function mouse_design()
+    local m = mp.get_property_native("mouse-pos") or {}
+    return (m.x or -1) / Modal.scale, (m.y or -1) / Modal.scale
+end
+local function modal_unbind()
+    mp.remove_key_binding("mf-click"); mp.remove_key_binding("mf-rclick")
+    for _, k in ipairs(KEYS) do mp.remove_key_binding("mf-key-" .. k) end
+end
+local function modal_close()
+    if not Modal.kind then return end
+    local kind = Modal.kind
+    Modal.kind, Modal.build, Modal.canvas = nil, nil, nil
+    Modal.ov:remove()
+    modal_unbind()
+    if kind ~= "home" then draw_home() end  -- the home screen may be underneath
+end
+modal_redraw = function()
+    if not Modal.kind then return end
+    local W, H, s = design_size()
+    Modal.scale = s
+    Modal.ov.res_x, Modal.ov.res_y = W, H
+    Modal.canvas = Modal.build(W, H)
+    Modal.ov.data = Modal.canvas:render()
+    Modal.ov:update()
+end
+local function modal_show(kind, build)
+    if Modal.kind and Modal.kind ~= kind then modal_unbind() end
+    Modal.kind, Modal.build = kind, build
+    modal_redraw()
+    mp.add_forced_key_binding("MBTN_LEFT", "mf-click", function()
+        local x, y = mouse_design()
+        local a = Modal.canvas and Modal.canvas:hit(x, y)
+        if a and a.kind ~= "none" then handle_action(a) end
+    end)
+    mp.add_forced_key_binding("MBTN_RIGHT", "mf-rclick", function()
+        local x, y = mouse_design()
+        local a = Modal.canvas and Modal.canvas:hit(x, y)
+        if a and a.kind == "recent" then handle_action({ kind = "recent_remove", index = a.index }) end
+    end)
+    if kind ~= "home" then
+        for _, k in ipairs(KEYS) do
+            mp.add_forced_key_binding(k, "mf-key-" .. k, function() handle_action({ kind = "key", key = k }) end, { repeatable = true })
+        end
+    end
+end
+mp.observe_property("osd-dimensions", "native", function() modal_redraw() end)
+
+-- ---------- setup sheet ----------
+local SH  -- { kind, title, meta, hook, custom = {text, valid, focus}, src_num, src_den, w, h, timer }
+local function sheet_dims()
+    if SH.w then return SH.w, SH.h end
+    local q = S.quality == "auto" and "1440" or S.quality
+    local sz = QUALITY_SIZE[q] or QUALITY_SIZE["1080"]
+    if SH.max_h and SH.max_h > 0 then
+        local best = QUALITY_SIZE["480"]
+        for _, s in pairs(QUALITY_SIZE) do if s[2] <= math.min(sz[2], SH.max_h) + 20 and s[2] > best[2] then best = s end end
+        sz = best
+    end
+    return sz[1], sz[2]
+end
+local function sheet_args()
+    local w, h = sheet_dims()
+    return { src_num = SH.src_num, src_den = SH.src_den, cap = cap(), exact = cal(w, h), ref = cal(REF_W, REF_H),
+        ref_w = REF_W, ref_h = REF_H, w = w, h = h, ladder = LADDER }
+end
+local function custom_valid(text)
+    if not SH or text == "" then return false end
+    return sheet.resolve(text, sheet_args()) ~= nil
+end
+local function sheet_finish()
+    if not SH then return end
+    local sh = SH
+    SH = nil
+    if sh.timer then sh.timer:kill() end
+    modal_close()
+    if sh.hook then sh.hook:cont() end
+end
+-- Even-rate preference: when the saved choice isn't even on this display, pre-select the nearest even one.
+local function prefer_even(a)
+    if not S.even then return end
+    local r = sheet.resolve(S.choice, a)
+    local even = sheet.rates(a)
+    if not r or #even == 0 then return end
+    local cur = r.num / r.den
+    for _, e in ipairs(even) do if math.abs(e.num / e.den - cur) < 0.5 then return end end
+    local best
+    for _, e in ipairs(even) do
+        if e.state ~= "muted" and (not best or math.abs(e.num / e.den - cur) < math.abs(best.num / best.den - cur)) then best = e end
+    end
+    if best then S.choice = best.choice end
+end
+local function sheet_model(W, H)
+    local a = sheet_args()
+    local even, other = sheet.rates(a)
+    local choice = SH.custom.valid and SH.custom.text or S.choice
+    local r = sheet.resolve(choice, a)
+    local p = sheet.preview(r, a)
+    local qualities, quality_label
+    if SH.kind == "yt" then
+        qualities = SH.qualities
+        local _, h = sheet_dims()
+        quality_label = h .. "p"
+    end
+    return sheet.render({
+        kind = SH.kind, title = SH.title, meta = SH.meta, quality = S.quality, qualities = qualities, quality_label = quality_label,
+        quality_note = "Auto picks the best stream up to " .. sheet.AUTO_MAX_HEIGHT .. "p. Higher qualities need more GPU for the same frame rate.",
+        choice = choice, custom = SH.custom, even = even, other = other, preview = p,
+        remember = SH.kind == "yt" and not S.ask_yt or SH.kind == "local" and not S.ask_local,
+        remember_label = SH.kind == "yt" and "Don't ask again for YouTube" or "Don't ask again for local files",
+        src_label = fps.fmt(SH.src_num / SH.src_den), cap = a.cap,
+        play_label = r and ("Play at " .. fps.fmt(math.floor(r.num / r.den + 0.5)) .. " fps") or "Play",
+        original_label = "Play original", W = W, H = H,
+    })
+end
+local function open_sheet(kind, hook)
+    local track
+    for _, t in ipairs(video_tracks()) do if not track or t.selected then track = t end end
+    local n, d = fps.snap(track and track["demux-fps"])
+    if not n then return false end
+    local path = mp.get_property("path") or ""
+    local title = mp.get_property("media-title") or path:match("[^/\\]+$") or path
+    local dur = fmt_dur(mp.get_property_number("duration"))
+    local meta
+    SH = { kind = kind, hook = hook, src_num = n, src_den = d, custom = { text = "", valid = false, focus = false } }
+    if kind == "yt" then
+        local items, max_h = available_qualities()
+        SH.qualities, SH.max_h = items, max_h
+        local host = (path:match("^https?://([^/]+)") or "link"):gsub("^www%.", "")
+        meta = join({ host:find("youtu") and "YouTube" or host, dur, "source " .. fps.fmt(n / d) .. " fps",
+            max_h > 0 and ("up to " .. max_h .. "p") or nil })
+    else
+        SH.w, SH.h = track and track["demux-w"], track and track["demux-h"]
+        local codec = track and track.codec and track.codec:upper():gsub("HEVC", "HEVC"):gsub("H264", "H.264") or nil
+        meta = join({ ui.fit(path:match("^(.*)[/\\]") or "", 13, 220), dur,
+            SH.w and size_label(SH.w, SH.h) or nil, fps.fmt(n / d) .. " fps", codec })
+    end
+    SH.title, SH.meta = title, meta
+    prefer_even(sheet_args())
+    if hook then SH.timer = mp.add_timeout(PROMPT_TIMEOUT, sheet_finish) end
+    modal_show("sheet", sheet_model)
+    return true
+end
+
+-- ---------- quick menu ----------
+local function quick_model(W, H)
+    local w, h = video_size()
+    local a = { src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H), ref = cal(REF_W, REF_H),
+        ref_w = REF_W, ref_h = REF_H, w = w, h = h, ladder = LADDER }
+    local even, other = sheet.rates(a)
+    local t = target()
+    return sheet.quick({ even = even, other = other, choice = S.choice, custom = S.qcustom, enabled = S.enabled,
+        src_label = fps.fmt(S.src_num / S.src_den), target_label = t and (fps.fmt(t) .. " fps") or "original",
+        cap = a.cap, W = W, H = H, bottom = H - 84 })
+end
+
+-- ---------- settings ----------
+local TAB = "playback"
+local function label_choice(c)
+    if c:sub(1, 1) == "x" then return c:sub(2) .. "× source" end
+    return c .. " fps"
+end
+local function label_quality(q) return q == "auto" and ("Auto · up to " .. sheet.AUTO_MAX_HEIGHT .. "p") or (q .. "p") end
+local function engines_model()
+    local out = {}
+    for _, s in ipairs(SIZES) do
+        local c = cal(s[2], s[3])
+        local n = 0
+        local vals = {}
+        for i = 1, #LADDER do if c[i] then n = n + 1; vals[i] = string.format("%d", math.floor(c[i] + 0.5)) end end
+        local state = (S.building and S.building.w == s[2] and S.building.h == s[3]) and "building"
+            or (n >= #LADDER and "ready") or (n > 0 and "partial") or "none"
+        out[#out + 1] = { name = s[1], dim = size_label(s[2], s[3]), w = s[2], h = s[3], state = state, count = n, vals = n > 0 and vals or nil }
+    end
+    return out
+end
+local function checks_model()
+    local function tri(v, yes, no, unknown) if v == true then return yes elseif v == false then return no end return unknown end
+    return {
+        { label = "mpv.exe set to High performance GPU", ok = S.checks.gpu_pref,
+          hint = tri(S.checks.gpu_pref, "", "Settings → System → Display → Graphics → add mpv.exe → High performance", "Could not read the Windows graphics preference") },
+        { label = "Fixed refresh rate, G-SYNC off", ok = S.checks.refresh,
+          hint = tri(S.checks.refresh, S.checks.refresh_detail or "", (S.checks.refresh_detail or "") .. " · variable refresh: turn off G-SYNC and the Dynamic refresh rate",
+              "Measured while a video plays") },
+        { label = "RIFE engines for 1080p", ok = ref_ready(), hint = ref_ready() and "" or "Built on first launch; see the Engines tab" },
+        { label = S.gpu_name and ("GPU: " .. S.gpu_name) or "NVIDIA driver", ok = S.gpu_name ~= nil and true or nil,
+          hint = S.driver and ("driver " .. S.driver) or "nvidia-smi did not answer" },
+    }
+end
+local function settings_model(W, H)
+    return settings.render({
+        W = W, H = H, tab = TAB, ladder = LADDER,
+        playback = { ask_yt = S.ask_yt, ask_local = S.ask_local, rate_label = label_choice(S.choice), quality_label = label_quality(S.quality),
+            anime = S.anime, even = S.even, headroom_label = string.format("%.1f×", S.headroom) .. (S.headroom == 1.5 and " (recommended)" or ""),
+            audio_label = string.format("%d ms", S.audio_delay or 0) },
+        engines = engines_model(), checks = checks_model(),
+        keys = { { "Ctrl+O", "Open a file" }, { "Ctrl+V", "Play the link in the clipboard" }, { "F", "Frame-rate menu" },
+            { "D", "Debug overlay" }, { "Ctrl+,", "Settings" }, { "Space", "Play / pause" }, { "← →", "Seek 5 s" }, { "f", "Fullscreen" },
+            { "Ctrl+− / Ctrl++", "Audio offset ±100 ms" } },
+        version = "Midframe " .. VERSION .. " · TensorRT",
+    })
+end
+local function cycle(list, cur, eq)
+    for i, v in ipairs(list) do if (eq and eq(v, cur)) or v == cur then return list[i % #list + 1] end end
+    return list[1]
+end
+
+-- ---------- home ----------
+local function home_model(W, H)
+    local status
+    if S.building then status = { label = "Preparing RIFE engines…", tone = "warn" }
+    elseif ref_ready() then status = { label = "RIFE ready" .. (S.gpu_name and (" · " .. S.gpu_name) or "") .. " · " .. cap() .. " Hz", tone = "good" }
+    else status = { label = "RIFE not prepared yet", tone = "warn" } end
+    local recents = {}
+    for _, r in ipairs(S.recents) do
+        recents[#recents + 1] = { title = r.title or r.path, meta = recent_meta(r), fps = r.fps and (r.fps .. " fps") or nil,
+            progress = (r.pos and r.duration and r.duration > 0) and r.pos / r.duration or 0 }
+    end
+    local ready = {}
+    for _, s in ipairs(SIZES) do if cal_count(s[2], s[3]) > 0 then ready[#ready + 1] = s[1] end end
+    local strip = {
+        "Engines: " .. (#ready > 0 and (table.concat(ready, ", ") .. " ready · others build on first play") or "building on first launch"),
+        "GPU: " .. (S.checks.gpu_pref == true and "high performance ✓" or S.checks.gpu_pref == false and "not set to high performance !" or "preference unknown"),
+        "Display: " .. (S.checks.refresh == true and ("fixed " .. cap() .. " Hz ✓") or S.checks.refresh == false and "variable refresh !" or (cap() .. " Hz · checked during playback")),
+    }
+    return home.render({ W = W, H = H, status = status, recents = recents, url = S.url_text, url_focus = S.url_focus, strip = strip, version = "v" .. VERSION })
+end
+draw_home = function()
+    local idle = mp.get_property_bool("idle-active")
+    if not idle then
+        if Modal.kind == "home" then modal_close() end
+        return
+    end
+    if Modal.kind == nil or Modal.kind == "home" then modal_show("home", home_model) end
+end
+mp.observe_property("idle-active", "bool", draw_home)
+
+-- ---------- opening files / links ----------
+local function play_path(path, pos)
+    if not path or path == "" then return end
+    if pos and pos > 5 then mp.commandv("loadfile", path, "replace", "start=" .. string.format("%.1f", pos))
+    else mp.commandv("loadfile", path, "replace") end
+end
+local function open_file_dialog()
+    local ps = "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; " ..
+        "$d.Title = 'Open video'; $d.Filter = 'Video files|*.mkv;*.mp4;*.m4v;*.webm;*.mov;*.avi;*.ts;*.m2ts;*.wmv;*.flv;*.mpg|All files|*.*'; " ..
+        "if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.FileName) }"
+    mp.command_native_async({ name = "subprocess", playback_only = false, capture_stdout = true,
+        args = { "powershell", "-NoProfile", "-STA", "-Command", ps } }, function(ok, res)
+        local path = ok and res.stdout and res.stdout:gsub("%s+$", "") or ""
+        if path ~= "" then play_path(path) end
+    end)
+end
+local function clipboard_text()
+    local t = mp.get_property("clipboard/text")
+    return t and t:gsub("^%s+", ""):gsub("%s+$", "") or ""
+end
+local function play_clipboard()
+    if mp.get_property("clipboard/text") == nil then return mp.commandv("script-binding", "uosc/paste") end  -- older mpv
+    local t = clipboard_text()
+    if t == "" then return notice("Clipboard is empty", 3, "warn") end
+    if not (is_url(t) or utils.file_info(t)) then return notice("Clipboard has no link or file path", 3, "warn") end
+    play_path(t)
+end
+local function type_link()
+    S.url_focus = true; modal_redraw()
+    input.get({
+        prompt = "Link:",
+        submit = function(text)
+            input.terminate()
+            S.url_focus = false; S.url_text = nil; modal_redraw()
+            if text and text ~= "" then play_path((text:gsub("^%s+", ""):gsub("%s+$", ""))) end
+        end,
+        closed = function() S.url_focus = false; modal_redraw() end,
+    })
+end
+mp.add_key_binding("ctrl+o", "open-file", open_file_dialog)
+mp.add_key_binding("ctrl+v", "paste", play_clipboard)
+
+-- ---------- actions from every surface ----------
+handle_action = function(a)
+    local kind = Modal.kind
+    if kind == "home" then
+        if a.kind == "open" then open_file_dialog()
+        elseif a.kind == "field" then type_link()
+        elseif a.kind == "play_link" then if S.url_text and S.url_text ~= "" then play_path(S.url_text) else play_clipboard() end
+        elseif a.kind == "recent" then local r = S.recents[a.index]; if r then play_path(r.path, r.pos) end
+        elseif a.kind == "recent_remove" then table.remove(S.recents, a.index); save_recents(); modal_redraw()
+        elseif a.kind == "clear" then S.recents = {}; save_recents(); modal_redraw()
+        elseif a.kind == "settings" then TAB = "playback"; modal_show("settings", settings_model) end
+    elseif kind == "sheet" then
+        if not SH then return modal_close() end
+        if a.kind == "quality" then
+            S.quality = a.value; save_prefs(); apply_quality(); modal_redraw()
+        elseif a.kind == "rate" then
+            SH.custom.focus = false
+            set_choice(a.choice, true); modal_redraw()
+        elseif a.kind == "custom" then
+            SH.custom.focus = true; modal_redraw()
+        elseif a.kind == "remember" then
+            if SH.kind == "yt" then S.ask_yt = not S.ask_yt else S.ask_local = not S.ask_local end
+            save_prefs(); modal_redraw()
+        elseif a.kind == "original" then
+            set_choice("off", true); sheet_finish()
+        elseif a.kind == "play" or (a.kind == "key" and (a.key == "ENTER" or a.key == "KP_ENTER")) then
+            if SH.custom.valid then set_choice(SH.custom.text, true) end
+            if SH.custom.focus and not SH.custom.valid and SH.custom.text ~= "" then return notice("That frame rate is out of range", 3, "bad") end
+            sheet_finish()
+        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then
+            sheet_finish()
+        elseif a.kind == "key" then
+            if not SH.custom.focus then return end
+            local k = a.key == "KP_DEC" and "." or a.key
+            if k == "BS" then SH.custom.text = SH.custom.text:sub(1, -2)
+            elseif #k == 1 and #SH.custom.text < 6 then SH.custom.text = SH.custom.text .. k end
+            SH.custom.valid = custom_valid(SH.custom.text)
+            modal_redraw()
+        end
+    elseif kind == "quick" then
+        S.qcustom = S.qcustom or { text = "", valid = false, focus = false }
+        if a.kind == "rate" then S.qcustom.focus = false; set_choice(a.choice, true); modal_redraw()
+        elseif a.kind == "toggle" then if S.enabled then set_choice("off", true) else set_choice(S.choice, true) end; modal_redraw()
+        elseif a.kind == "custom" then S.qcustom.focus = true; modal_redraw()
+        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then S.qcustom = nil; modal_close()
+        elseif a.kind == "key" and (a.key == "ENTER" or a.key == "KP_ENTER") then
+            if S.qcustom.valid then set_choice(S.qcustom.text, true) end
+            S.qcustom = nil; modal_close()
+        elseif a.kind == "key" and S.qcustom.focus then
+            local k = a.key == "KP_DEC" and "." or a.key
+            if k == "BS" then S.qcustom.text = S.qcustom.text:sub(1, -2)
+            elseif #k == 1 and #S.qcustom.text < 6 then S.qcustom.text = S.qcustom.text .. k end
+            local n = fps.resolve(S.qcustom.text, S.src_num, S.src_den, cap())
+            S.qcustom.valid = n ~= nil
+            modal_redraw()
+        end
+    elseif kind == "settings" then
+        if a.kind == "tab" then TAB = a.value; modal_redraw()
+        elseif a.kind == "toggle" then
+            S[a.key] = not S[a.key]; save_prefs()
+            if a.key == "anime" and S.added then retarget() end
+            modal_redraw()
+        elseif a.kind == "cycle" then
+            if a.key == "choice" then S.choice = cycle(CHOICES, S.choice); if S.src_num then retarget() end
+            elseif a.key == "quality" then
+                local vals = {} for _, q in ipairs(sheet.QUALITIES) do vals[#vals + 1] = q.value end
+                S.quality = cycle(vals, S.quality)
+            elseif a.key == "headroom" then S.headroom = cycle(HEADROOMS, S.headroom, function(v, c) return math.abs(v - c) < 0.01 end); auto.HEADROOM = S.headroom
+            elseif a.key == "audio" then
+                S.audio_delay = cycle({ -200, -150, -100, -50, 0, 50, 100, 150, 200 }, S.audio_delay or 0)
+                mp.set_property_number("audio-delay", S.audio_delay / 1000)
+            end
+            save_prefs(); modal_redraw()
+        elseif a.kind == "prepare" then start_build({ w = a.w, h = a.h }); modal_redraw()
+        elseif a.kind == "config" then
+            mp.command_native_async({ name = "subprocess", playback_only = false, args = { "explorer", expand("~~/") } }, function() end)
+        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then modal_close() end
+    end
+end
+
+-- Scriptable UI actions (tests, automation): script-message-to midframe action '{"kind":"rate","choice":"x2"}'
+mp.register_script_message("action", function(json) local a = utils.parse_json(json); if type(a) == "table" then handle_action(a) end end)
 
 mp.add_key_binding("F", "fps-menu", function()
+    if Modal.kind == "quick" then return modal_close() end
     if not S.src_num then return notice("Open a video first", 2, "info") end
-    local cap = fps.cap(mp.get_property_number("display-fps"))
-    local items = fps_items(S.src_num, S.src_den, cap,
-        function(c) return { "script-message-to", "midframe", "set-fps", c } end)
-    items[#items].separator = true
-    items[#items + 1] = { title = "Custom…", hint = "type a value", value = "script-message-to midframe fps-custom" }
-    local t, lv = target()
-    items[#items + 1] = {
-        title = "Interpolation", value = "script-message-to midframe toggle",
-        icon = S.enabled and "toggle_on" or "toggle_off",
-        hint = (not S.enabled and "off") or (t and LADDER[lv.rife].label) or (S.building and "preparing…")
-            or "on · not running",
-    }
-    mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json({
-        type = "midframe_fps", title = "Frame rate", items = items, search_style = "disabled",
-        footnote = "Source " .. fps.fmt(S.src_num / S.src_den) .. " fps · Display " .. cap .. " Hz",
-    }))
+    modal_show("quick", quick_model)
+end)
+mp.add_key_binding(nil, "setup", function()
+    if Modal.kind == "sheet" then return sheet_finish() end
+    if not mp.get_property("path") then return notice("Open a video first", 2, "info") end
+    if not open_sheet(is_url(mp.get_property("path")) and "yt" or "local", nil) then notice("Source frame rate not known yet", 3, "warn") end
+end)
+mp.add_key_binding("ctrl+,", "settings", function()
+    if Modal.kind == "settings" then return modal_close() end
+    modal_show("settings", settings_model)
 end)
 
--- Before-playback prompts. Each one pauses mpv's file loading (hook:defer) until answered,
--- dismissed, or PROMPT_TIMEOUT passes, so loading can never hang.
-local prompt  -- { done = fn, timer = timer }
-local function finish_prompt()
-    if not prompt then return end
-    local p = prompt
-    prompt = nil
-    if p.timer then p.timer:kill() end
-    p.done()
-end
-local function open_prompt(menu, done)
-    finish_prompt()
-    menu.type = "midframe_prompt"
-    menu.callback = { mp.get_script_name(), "prompt-event" }
-    menu.search_style = "disabled"
-    prompt = { done = done, timer = mp.add_timeout(PROMPT_TIMEOUT, finish_prompt) }
-    mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(menu))
-end
-mp.register_script_message("prompt-event", function(json)
-    local e = utils.parse_json(json) or {}
-    if e.type == "activate" and type(e.value) == "string" then
-        local kind, v = e.value:match("^(%a+):(.+)$")
-        if kind == "q" then
-            S.quality = v
-            save_prefs()
-        elseif kind == "f" then
-            set_choice(v, true)
-        end
-        mp.commandv("script-message-to", "uosc", "close-menu", "midframe_prompt")
-    elseif e.type == "close" then
-        finish_prompt()
-    end
-end)
-
-local function ytdl_format(q)
-    local h = q == "auto" and AUTO_MAX_HEIGHT or tonumber(q)
-    return "bestvideo[height<=?" .. h .. "]+bestaudio/best"
-end
-local function is_url(p) return p ~= nil and (p:find("^https?://") or p:find("^ytdl://")) ~= nil end
-local function asking() return o.ask and S.uosc end
-
--- YouTube quality: asked before yt-dlp runs (ytdl_hook is on_load priority 10) and applied as a
--- file-local option, so switching quality later from uosc's menu still works.
-mp.add_hook("on_load", 5, function(hook)
-    local path = mp.get_property("path")
-    if not (asking() and is_url(path)) then return end
-    -- The same URL reloading right away is a quality switch from uosc's menu: keep the answers.
-    if path == S.last_url and mp.get_time() - (S.ended_at or -1e9) < 15 then return end
-    S.last_url = path
-    hook:defer()
-    local items = {}
-    for _, q in ipairs(QUALITIES) do
-        items[#items + 1] = {
-            title = q == "auto" and "Auto" or (q .. "p"),
-            hint = q == "auto" and ("best up to " .. AUTO_MAX_HEIGHT .. "p") or nil,
-            value = "q:" .. q, active = q == S.quality or nil,
-        }
-    end
-    open_prompt({ title = "Video quality", items = items, footnote = "Picks the closest available stream" },
-        function()
-            mp.set_property("file-local-options/ytdl-format", ytdl_format(S.quality))
-            msg.info("quality " .. S.quality .. " -> ytdl-format " .. ytdl_format(S.quality))
-            hook:cont()
-        end)
-end)
-
--- Frame rate: asked once the demuxer knows the source fps, before decoding starts.
+-- Before-playback sheet: once the demuxer knows the tracks (quality list, source fps), before decoding starts.
+-- hook:defer() pauses loading until the sheet is answered, dismissed, or PROMPT_TIMEOUT passes.
 mp.add_hook("on_preloaded", 50, function(hook)
-    if not asking() then return end
     local path = mp.get_property("path")
-    if is_url(path) and S.last_fps_url == path and mp.get_time() - (S.ended_at or -1e9) < 15 then return end
-    local track
-    for _, t in ipairs(mp.get_property_native("track-list") or {}) do
-        if t.type == "video" and (not track or t.selected) then track = t end
-    end
-    local n, d
-    if track then n, d = fps.snap(track["demux-fps"]) end
-    if not n then return end
-    if is_url(path) then S.last_fps_url = path end
-    local cap = fps.cap(mp.get_property_number("display-fps"))
-    local items = fps_items(n, d, cap, function(c) return "f:" .. c end)
-    items[#items].separator = true
-    items[#items + 1] = { title = "Play original", hint = fps.fmt(n / d) .. " fps, no interpolation",
-        value = "f:off", active = not S.enabled or nil }
+    local url = is_url(path)
+    if url then apply_quality() end  -- the remembered quality, before any frame decodes
+    if not (url and S.ask_yt or not url and S.ask_local) then return end
+    if S.last_prompt_path == path and mp.get_time() - (S.ended_at or -1e9) < 15 then return end  -- immediate reload
+    S.last_prompt_path = path
     hook:defer()
-    open_prompt({
-        title = "Frame rate for this video", items = items,
-        footnote = "Source " .. fps.fmt(n / d) .. " fps · Display " .. cap .. " Hz · F changes it later",
-    }, function() hook:cont() end)
+    if not open_sheet(url and "yt" or "local", hook) then hook:cont() end
 end)
 
 -- Debug overlay (toggle with D).
 local ov = mp.create_osd_overlay("ass-events")
-ov.res_x, ov.res_y = 1280, 720
 local ov_timer, vram_timer
 local function draw()
+    local W, H = design_size()
+    ov.res_x, ov.res_y = W, H
     local w, h = video_size()
     local t, lv = target()
     ov.data = overlay.render({
-        res_w = ov.res_x,
+        res_w = W, res_h = H,
         src_res = w and size_label(w, h),
         src_fps = S.src_num and S.src_num / S.src_den,
         target_fps = t,
@@ -544,33 +913,32 @@ mp.add_key_binding("D", "debug", function()
     sync_ui()
 end)
 
--- Start screen while nothing is loaded.
-local ov_idle = mp.create_osd_overlay("ass-events")
-local idle_boxes
-local function idle_click()
-    local m = mp.get_property_native("mouse-pos") or {}
-    if overlay.hit(idle_boxes and idle_boxes.open, m.x or -1, m.y or -1) then
-        mp.commandv("script-binding", "uosc/open-file")
-    elseif overlay.hit(idle_boxes and idle_boxes.paste, m.x or -1, m.y or -1) then
-        mp.commandv("script-binding", "uosc/paste")
-    end
+-- ---------- system checks (once at start) ----------
+local function probe_system()
+    mp.command_native_async({ name = "subprocess", playback_only = false, capture_stdout = true,
+        args = { "nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader" } }, function(ok, res)
+        local name, drv = (ok and res.stdout or ""):match("^%s*([^,\n]-)%s*,%s*([%d%.]+)")
+        if name then S.gpu_name, S.driver = name:gsub("^NVIDIA ", ""), drv end
+        draw_home()
+    end)
+    -- Windows per-app GPU preference lives in the registry: GpuPreference=2 means "High performance".
+    local exe = expand("~~exe_dir/mpv.exe")
+    mp.command_native_async({ name = "subprocess", playback_only = false, capture_stdout = true,
+        args = { "reg", "query", "HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences" } }, function(ok, res)
+        if not ok or not res.stdout or res.status ~= 0 then return end
+        local want = exe:lower():gsub("/", "\\")
+        local found = false
+        for line in res.stdout:gmatch("[^\r\n]+") do
+            local l = line:lower()
+            if l:find(want, 1, true) then found = l:find("gpupreference=2", 1, true) ~= nil end
+        end
+        S.checks.gpu_pref = found
+        draw_home()
+    end)
 end
-draw_idle = function()
-    if not mp.get_property_bool("idle-active") then
-        ov_idle:remove()
-        mp.remove_key_binding("mf-idle-click")
-        return
-    end
-    local w, h = osd_size()
-    local state = (S.building and "building") or (ref_ready() and "ready") or "missing"
-    ov_idle.res_x, ov_idle.res_y = w, h
-    ov_idle.data, idle_boxes = overlay.idle(w, h, state)
-    ov_idle:update()
-    mp.add_forced_key_binding("MBTN_LEFT", "mf-idle-click", idle_click)
-end
-mp.observe_property("idle-active", "bool", draw_idle)
-mp.observe_property("osd-dimensions", "native", function() draw_idle() end)
 
 -- First launch: build + measure every level at the reference size before any video needs it.
 ensure_ref()
+probe_system()
+draw_home()
 sync_ui()

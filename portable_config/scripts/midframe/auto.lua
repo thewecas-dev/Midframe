@@ -66,23 +66,33 @@ end
 --   ref:   {level = out_fps_at_2x} measured at ref_w x ref_h (scaled by pixel count as an estimate)
 -- Returns level, known (true when the pick comes from an exact measurement).
 -- A level nothing is known about is skipped: a wrong guess costs a multi-second reload plus drops.
-function M.start_level(exact, ref, ref_w, ref_h, w, h, need_per_s, total)
-    local scale = (ref_w and ref_h) and (ref_w * ref_h) / (w * h) or nil
-    local fallback
+-- plan(): which RIFE level a target needs, and whether calibration says it will keep up.
+--   exact: {level = out_fps_at_2x} measured at this frame size; ref: same at ref_w x ref_h (scaled by pixels).
+-- Returns { level, fits, known, measured }: fits = speed covers need * HEADROOM; known = pick is from an exact
+-- measurement; measured = any calibration existed at all.
+function M.plan(exact, ref, ref_w, ref_h, w, h, need_per_s, total)
+    local scale = (ref_w and ref_h and w and h) and (ref_w * ref_h) / (w * h) or nil
+    local any = false
     for i = 1, total do
         local e = exact[i]
         if e then
-            if e / 2 >= need_per_s * M.HEADROOM then return i, true end
-            fallback = i
+            any = true
+            if e / 2 >= need_per_s * M.HEADROOM then return { level = i, fits = true, known = true, measured = true } end
         elseif scale and ref[i] then
-            if ref[i] / 2 * scale >= need_per_s * M.HEADROOM then return i, false end
-            fallback = fallback or i
+            any = true
+            if ref[i] / 2 * scale >= need_per_s * M.HEADROOM then return { level = i, fits = true, known = false, measured = true } end
         end
     end
     -- Nothing keeps up: the fastest measured level, else the fastest in the ladder.
     local last
     for i = total, 1, -1 do if exact[i] or (scale and ref[i]) then last = i; break end end
-    return last or total, exact[last or total] ~= nil
+    return { level = last or total, fits = false, known = exact[last or total] ~= nil, measured = any }
+end
+
+-- Pick the start level (see plan()). Returns level, known.
+function M.start_level(exact, ref, ref_w, ref_h, w, h, need_per_s, total)
+    local p = M.plan(exact, ref, ref_w, ref_h, w, h, need_per_s, total)
+    return p.level, p.known
 end
 
 function M.tick(st, s, now)
