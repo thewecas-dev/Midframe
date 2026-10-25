@@ -49,7 +49,11 @@ function M.render(m)
         tx = tx + tw + 4
     end
     c:rect(dx, 100, DW, 1, 0, C.border)
-    local y = 122
+    -- scrollable content between the tab strip and the footer
+    local top, bottom = 101, H - 70
+    local scroll = m.scroll or 0
+    c:setclip(dx, top, DW, bottom - top)
+    local y = 122 - scroll
     local function group(title) c:text(x, y + 6, 4, 11, C.muted, title, { bold = true }); y = y + 26 end
 
     if m.tab == "playback" then
@@ -131,6 +135,14 @@ function M.render(m)
             c:text(x + kw + 12, y + 11, 4, 13, C.text, k[2])
             y = y + 30
         end
+    end
+    c:setclip(nil)
+    c.scroll_max = math.max(0, (y + scroll) - bottom + 16)  -- how far the content extends past the visible area
+    if c.scroll_max > 0 then  -- thin scrollbar
+        local track_h = bottom - top - 16
+        local th = math.max(24, track_h * (bottom - top) / ((y + scroll) - 122 + (bottom - top)))
+        local ty = top + 8 + (track_h - th) * (scroll / c.scroll_max)
+        c:rect(dx + DW - 6, ty, 3, th, 1.5, C.border_strong)
     end
     -- footer
     local fy = H - 56

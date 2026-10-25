@@ -157,7 +157,7 @@ local function sync_ui()
     local t, lv = target()
     local src = S.src_num and fps.fmt(S.src_num / S.src_den)
     set_button("midframe_fps", {
-        icon = "bolt", active = t ~= nil, badge = t and string.format("%d", math.floor(t + 0.5)) or nil,
+        icon = "bolt", active = t ~= nil,
         tooltip = t and ("Frame rate: " .. src .. " → " .. fps.fmt(t) .. " fps (F)") or "Frame rate (F)",
         command = "script-binding midframe/fps-menu",
     })
@@ -722,7 +722,7 @@ local function checks_model()
 end
 local function settings_model(W, H)
     return settings.render({
-        W = W, H = H, tab = TAB, ladder = LADDER,
+        W = W, H = H, tab = TAB, ladder = LADDER, scroll = S.settings_scroll or 0,
         playback = { ask_yt = S.ask_yt, ask_local = S.ask_local, rate_label = label_choice(S.choice), quality_label = label_quality(S.quality),
             anime = S.anime, even = S.even, headroom_label = string.format("%.1f×", S.headroom) .. (S.headroom == 1.5 and " (recommended)" or ""),
             audio_label = string.format("%d ms", S.audio_delay or 0) },
@@ -894,7 +894,13 @@ handle_action = function(a)
             modal_redraw()
         end
     elseif kind == "settings" then
-        if a.kind == "tab" then TAB = a.value; modal_redraw()
+        if a.kind == "tab" then TAB = a.value; S.settings_scroll = 0; modal_redraw()
+        elseif a.kind == "key" and (a.key == "WHEEL_UP" or a.key == "WHEEL_DOWN" or a.key == "UP" or a.key == "DOWN" or a.key == "PGUP" or a.key == "PGDWN") then
+            local step = (a.key == "PGUP" or a.key == "PGDWN") and 240 or 48
+            local dir = (a.key == "WHEEL_UP" or a.key == "UP" or a.key == "PGUP") and -1 or 1
+            local max = Modal.canvas and Modal.canvas.scroll_max or 0
+            S.settings_scroll = math.max(0, math.min(max, (S.settings_scroll or 0) + dir * step))
+            modal_redraw()
         elseif a.kind == "toggle" then
             S[a.key] = not S[a.key]; save_prefs()
             if a.key == "anime" and S.added then retarget() end
@@ -917,6 +923,7 @@ handle_action = function(a)
         elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
             local i = 1 for j, t in ipairs(settings.TABS) do if t[1] == TAB then i = j end end
             TAB = settings.TABS[((i - 1 + (a.key == "RIGHT" and 1 or -1)) % #settings.TABS) + 1][1]
+            S.settings_scroll = 0
             modal_redraw()
         end
     end

@@ -77,6 +77,19 @@ for _, b in ipairs(hc.boxes) do hk[b[5].kind] = (hk[b[5].kind] or 0) + 1 end
 assert(hk.open >= 1 and hk.field == 1 and hk.play_link == 1 and hk.recent == 1 and hk.settings == 1 and hk.clear == 1, "home actions")
 assert(hc:render():find("Play something smoother."), "headline")
 
+-- test_clip: boxes outside a clip are dropped, inside are kept
+local cc = ui.canvas(100, 100); cc:setclip(0, 0, 100, 50); cc:box(0, 10, 10, 10, "in"); cc:box(0, 80, 10, 10, "out"); cc:setclip(nil); cc:box(0, 80, 10, 10, "after")
+eq(cc:hit(5, 15), "in"); eq(cc:hit(5, 85), "after"); assert(cc:render() == "" or true)
+
+-- test_settings_scroll: a short window needs scrolling on the Playback tab; a tall one does not
+local short = settings.render({ W = 1100, H = 560, tab = "playback", ladder = LADDER,
+    playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" } })
+assert(short.scroll_max > 0, "short drawer scrolls: " .. tostring(short.scroll_max))
+assert(short:render():find("\\clip(", 1, true), "content clipped")
+local tall = settings.render({ W = 1440, H = 1000, tab = "playback", ladder = LADDER,
+    playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" } })
+eq(tall.scroll_max, 0, "tall drawer does not scroll")
+
 -- test_settings
 local sc = settings.render({ W = 1440, H = 900, tab = "playback", ladder = LADDER,
     playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" },

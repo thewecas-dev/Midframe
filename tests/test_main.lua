@@ -236,7 +236,7 @@ assert(last_vf(E):find('"matrix":"2020ncl"'), last_vf(E))
 E = make_env({ cal = { ["1920x1080"] = RTX4050 } })
 play(E, VP, 23.976)
 assert(last_vf(E):find('"level":3'), "starts at level 3: " .. last_vf(E))
-assert(last_cmd(E, "set%-button midframe_fps"):find('"badge":"48"'), "fps button shows 48")
+assert(last_cmd(E, "set%-button midframe_fps"):find('"active":true') and not last_cmd(E, "set%-button midframe_fps"):find("badge"), "fps button lights up, no badge")
 eq(E.set["user-data/midframe/status"], "1920×1080 · 23.976 fps → 47.952 fps · RIFE 4.6 half", "status line")
 
 -- test_new_size_builds_on_demand: 720p has no engines yet -> build the estimated level only, play plain

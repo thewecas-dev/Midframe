@@ -58,9 +58,15 @@ Canvas.__index = Canvas
 function M.canvas(w, h) return setmetatable({ w = w, h = h, ev = {}, boxes = {} }, Canvas) end
 
 -- alpha: 0 (opaque) .. 255 (invisible). border: colour or nil. bw: border width.
+-- Clip every following event to a rectangle (nil clears). Used for scrollable areas.
+function Canvas:setclip(x, y, w, h)
+    self.clipstr = x and string.format("\\clip(%s,%s,%s,%s)", num(x), num(y), num(x + w), num(y + h)) or ""
+    self.cliprect = x and { x, y, x + w, y + h } or nil
+    return self
+end
 function Canvas:shape(path, fill, alpha, border, bw)
     local b = border and string.format("\\bord%s\\3c%s\\3a&H%02X&", num(bw or 1), border, alpha or 0) or "\\bord0"
-    self.ev[#self.ev + 1] = string.format("{\\an7\\pos(0,0)%s\\shad0\\1c%s\\1a&H%02X&\\p1}%s{\\p0}", b, fill, alpha or 0, path)
+    self.ev[#self.ev + 1] = string.format("{\\an7\\pos(0,0)%s%s\\shad0\\1c%s\\1a&H%02X&\\p1}%s{\\p0}", b, self.clipstr or "", fill, alpha or 0, path)
     return self
 end
 function Canvas:rect(x, y, w, h, r, fill, alpha, border, bw) return self:shape(M.rrect(x, y, w, h, r), fill, alpha, border, bw) end
@@ -81,12 +87,18 @@ end
 -- an: ASS alignment (7 top-left, 4 mid-left, 5 centre, 6 mid-right, 9 top-right, 8 top-centre).
 function Canvas:text(x, y, an, size, color, str, o)
     o = o or {}
-    self.ev[#self.ev + 1] = string.format("{\\an%d\\pos(%s,%s)\\fs%s\\fn%s\\b%d\\bord0\\shad0\\1c%s\\1a&H%02X&}%s",
-        an, num(x), num(y), num(size), o.font or M.FONT, o.bold and 1 or 0, color, o.alpha or 0, M.esc(str))
+    self.ev[#self.ev + 1] = string.format("{\\an%d\\pos(%s,%s)%s\\fs%s\\fn%s\\b%d\\bord0\\shad0\\1c%s\\1a&H%02X&}%s",
+        an, num(x), num(y), self.clipstr or "", num(size), o.font or M.FONT, o.bold and 1 or 0, color, o.alpha or 0, M.esc(str))
     return self
 end
 function Canvas:box(x, y, w, h, action)
-    self.boxes[#self.boxes + 1] = { x, y, x + w, y + h, action }
+    local b = { x, y, x + w, y + h, action }
+    if self.cliprect then  -- intersect with the active clip; drop boxes that fall fully outside
+        local c = self.cliprect
+        b[1], b[2], b[3], b[4] = math.max(b[1], c[1]), math.max(b[2], c[2]), math.min(b[3], c[3]), math.min(b[4], c[4])
+        if b[1] >= b[3] or b[2] >= b[4] then return self end
+    end
+    self.boxes[#self.boxes + 1] = b
     return self
 end
 function Canvas:hit(x, y)
