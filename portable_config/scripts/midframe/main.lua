@@ -244,9 +244,9 @@ end
 
 retarget = function()
     if not S.src_num then return end
-    local tn, td, err = fps.resolve(S.choice, S.src_num, S.src_den, cap())
+    local tn, td = fps.resolve(S.choice, S.src_num, S.src_den, cap())
     if not tn then
-        msg.info("no interpolation: " .. err)
+        msg.info("no interpolation: " .. tostring(td))  -- td carries the reason when tn is nil
         S.levels = nil
         remove()
         return sync_ui()
@@ -769,7 +769,7 @@ handle_action = function(a)
         if a.kind == "quality" then
             S.quality = a.value; save_prefs(); apply_quality(); modal_redraw()
         elseif a.kind == "rate" then
-            SH.custom.focus = false
+            SH.custom = { text = "", valid = false, focus = false }  -- a tile wins over a half-typed custom value
             set_choice(a.choice, true); modal_redraw()
         elseif a.kind == "custom" then
             SH.custom.focus = true; modal_redraw()
@@ -794,7 +794,7 @@ handle_action = function(a)
         end
     elseif kind == "quick" then
         S.qcustom = S.qcustom or { text = "", valid = false, focus = false }
-        if a.kind == "rate" then S.qcustom.focus = false; set_choice(a.choice, true); modal_redraw()
+        if a.kind == "rate" then S.qcustom = { text = "", valid = false, focus = false }; set_choice(a.choice, true); modal_redraw()
         elseif a.kind == "toggle" then if S.enabled then set_choice("off", true) else set_choice(S.choice, true) end; modal_redraw()
         elseif a.kind == "custom" then S.qcustom.focus = true; modal_redraw()
         elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then S.qcustom = nil; modal_close()
@@ -833,6 +833,9 @@ handle_action = function(a)
     end
 end
 
+mp.register_script_message("show", function(kind)
+    if kind == "home" then modal_show("home", home_model) elseif kind == "settings" then modal_show("settings", settings_model) end
+end)
 -- Scriptable UI actions (tests, automation): script-message-to midframe action '{"kind":"rate","choice":"x2"}'
 mp.register_script_message("action", function(json) local a = utils.parse_json(json); if type(a) == "table" then handle_action(a) end end)
 
