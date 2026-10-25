@@ -22,8 +22,10 @@ $plugins = "$app\vs-runtime\vs-plugins"
 if (Test-Path $app) { Remove-Item $app -Recurse -Force }
 New-Item -ItemType Directory -Force $app, $dl, $plugins | Out-Null
 
-function Get-File($url) {
-    $out = Join-Path $dl (Split-Path $url -Leaf)
+function Get-File($url, $name) {
+    # cache by tag for assets whose name never changes between releases (yt-dlp.exe, rcedit)
+    if (-not $name) { $name = Split-Path $url -Leaf }
+    $out = Join-Path $dl $name
     if (-not (Test-Path $out)) {
         Write-Host "Downloading $url"
         Invoke-WebRequest $url -OutFile "$out.part"
@@ -75,7 +77,7 @@ Move-Item $vsmlrtPy.FullName "$app\portable_config\vs\vsmlrt.py"
 
 # uosc UI, yt-dlp, launcher
 Expand-Archive (Get-File "$gh/tomasklaen/uosc/releases/download/$UOSC_TAG/uosc.zip") "$app\portable_config" -Force
-Copy-Item (Get-File "$gh/yt-dlp/yt-dlp/releases/download/$YTDLP_TAG/yt-dlp.exe") "$app\yt-dlp.exe"
+Copy-Item (Get-File "$gh/yt-dlp/yt-dlp/releases/download/$YTDLP_TAG/yt-dlp.exe" "yt-dlp-$YTDLP_TAG.exe") "$app\yt-dlp.exe"
 Copy-Item "$PSScriptRoot\launch.ps1" "$app\launch.ps1"
 Copy-Item "$PSScriptRoot\icon.ico" "$app\icon.ico"
 # Window / taskbar icon comes from mpv.exe's own resources: stamp ours in with rcedit
