@@ -151,6 +151,7 @@ function M.render(m)
     -- header
     if m.kind == "yt" then
         c:rect(x, y, 88, 50, 8, C.overlay)
+        ui.icon(c, "play", x + 32, y + 13, 24, C.faint)
         c:text(x + 104, y + 15, 4, 17, C.text, ui.fit(m.title or "", 17, sw - pad * 2 - 104 - 60, true), { bold = true })
         c:text(x + 104, y + 38, 4, 13, C.muted, ui.fit(m.meta or "", 13, sw - pad * 2 - 104 - 60))
     else

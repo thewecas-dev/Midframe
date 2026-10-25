@@ -81,10 +81,21 @@ local function osd_size()
     return (d.w and d.w > 0) and d.w or 1280, (d.h and d.h > 0) and d.h or 720
 end
 -- Everything is drawn in design units (1440x900) and scaled to the window through the overlay resolution.
+-- Scale follows the Windows display scaling and the window size, but never shrinks text below ~90% of the
+-- design: a small window gets a narrower canvas (layouts reflow on W/H), not a tiny one.
 local function design_size()
     local w, h = osd_size()
-    local s = math.max(0.6, math.min(1.5, math.min(w / ui.W, h / ui.H)))
+    local dpi = mp.get_property_number("display-hidpi-scale") or 1
+    local s = 1.15 * dpi * math.max(0.9, math.min(2, math.min(w / ui.W, h / ui.H)))  -- 1.15: comfortable from a couch
+    s = math.min(s, w / 980, h / 600)  -- keep at least 980x600 design units so the sheet and home still fit
+    s = math.max(s, 0.5)
     return math.floor(w / s + 0.5), math.floor(h / s + 0.5), s
+end
+-- Height of uosc's bottom bar in design units (timeline + controls), so popovers sit above it.
+local function bar_height()
+    local _, _, s = design_size()
+    local dpi = mp.get_property_number("display-hidpi-scale") or 1
+    return math.floor(96 * dpi / s + 0.5)
 end
 
 -- Notices: one styled pill at the top centre.
@@ -152,7 +163,7 @@ local function sync_ui()
     })
     local w, h = video_size()
     set_button("midframe_quality", {
-        icon = "high_quality", badge = h and (h .. "p") or nil, tooltip = "Quality and frame rate",
+        icon = "high_quality", badge = h and tostring(h) or nil, tooltip = h and (h .. "p · quality and frame rate") or "Quality and frame rate",
         command = "script-binding midframe/setup",
     })
     set_button("midframe_debug", { icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding midframe/debug" })
@@ -160,7 +171,8 @@ local function sync_ui()
     set_button("midframe_play", { icon = mp.get_property_bool("pause") and "play_arrow" or "pause", tooltip = "Play / pause (Space)", command = "cycle pause" })
     local status = ""
     if w and src then
-        status = size_label(w, h) .. " · " .. src .. " fps"
+        local title = mp.get_property("media-title")
+        status = (title and (ui.fit(title, 13, 520) .. "   ·   ") or "") .. size_label(w, h) .. " · " .. src .. " fps"
         if t then
             status = status .. " → " .. fps.fmt(t) .. " fps · " .. LADDER[lv.rife].label
         elseif S.building then
@@ -627,7 +639,7 @@ local function quick_model(W, H)
     local t = target()
     return sheet.quick({ even = even, other = other, choice = S.choice, custom = S.qcustom, enabled = S.enabled,
         src_label = fps.fmt(S.src_num / S.src_den), target_label = t and (fps.fmt(t) .. " fps") or "original",
-        cap = a.cap, W = W, H = H, bottom = H - 84 })
+        cap = a.cap, W = W, H = H, bottom = H - bar_height() })
 end
 
 -- ---------- settings ----------
@@ -721,8 +733,9 @@ local function open_file_dialog()
     local ps = "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; " ..
         "$d.Title = 'Open video'; $d.Filter = 'Video files|*.mkv;*.mp4;*.m4v;*.webm;*.mov;*.avi;*.ts;*.m2ts;*.wmv;*.flv;*.mpg|All files|*.*'; " ..
         "if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.FileName) }"
+    ps = ps:gsub("%$d%.ShowDialog%(%)", "$d.ShowDialog((New-Object System.Windows.Forms.Form -Property @{TopMost = $true}))")
     mp.command_native_async({ name = "subprocess", playback_only = false, capture_stdout = true,
-        args = { "powershell", "-NoProfile", "-STA", "-Command", ps } }, function(ok, res)
+        args = { "powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-STA", "-Command", ps } }, function(ok, res)
         local path = ok and res.stdout and res.stdout:gsub("%s+$", "") or ""
         if path ~= "" then play_path(path) end
     end)

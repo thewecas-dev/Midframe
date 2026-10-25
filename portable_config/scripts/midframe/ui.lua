@@ -137,7 +137,7 @@ function M.segment(c, x, y, w, h, items, selected, kind)
         local ix = x + pad + (i - 1) * (iw + gap)
         local sel = it.value == selected
         if sel then c:rect(ix, y + pad, iw, h - 2 * pad, 9, C.raised, 0, C.border_strong, 1) end
-        c:text(ix + iw / 2, y + h / 2, 5, 14, sel and C.text or (it.muted and C.faint or C.muted), it.label, { bold = sel })
+        c:text(ix + iw / 2, y + h / 2, 5, 14, sel and C.text or (it.muted and C.faint or C.text), it.label, { bold = sel, alpha = (it.muted and 0x70) or (sel and 0 or 0x30) })
         c:box(ix, y, iw, h, { kind = kind or "segment", value = it.value })
     end
 end
