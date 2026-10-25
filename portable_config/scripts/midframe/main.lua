@@ -57,6 +57,10 @@ local function write_json(path, t)
 end
 
 local LADDER = assert(read_json(expand("~~/vs/ladder.json")), "midframe: vs/ladder.json missing")
+-- Levels above FIRST are optional (slower "heavy" models): built only when picked as the best model in Settings.
+local FIRST = 1
+for i, l in ipairs(LADDER) do if not l.optional then FIRST = i; break end end
+local function required(i) return not LADDER[i].optional end
 local MATRIX = { ["bt.709"] = "709", ["bt.601"] = "170m", ["bt.2020-ncl"] = "2020ncl" }
 local prefs = read_json(PREFS) or {}
 local function pref(k, default) if prefs[k] == nil then return default end return prefs[k] end
@@ -66,7 +70,8 @@ local S = {
     ask_yt = pref("ask_yt", o.ask), ask_local = pref("ask_local", o.ask), anime = pref("anime", o.anime),
     even = pref("even", true), headroom = pref("headroom", auto.HEADROOM), audio_delay = pref("audio_delay", 0),
     fill_mode = pref("fill_mode", "fit"), fill_balance = pref("fill_balance", 0.5),
-    yt_cookies = pref("yt_cookies", "none"),
+    yt_cookies = pref("yt_cookies", "none"), top_level = pref("top_level", FIRST), anime4k = pref("anime4k", "off"),
+    guard = pref("guard", true),
     added = false, debug = false, builds = {}, building = nil,
     hist = { real_fps = {}, drops = {}, vram = {} },
     recents = read_json(RECENT) or {},
@@ -77,7 +82,8 @@ auto.HEADROOM = S.headroom
 local function save_prefs()
     write_json(PREFS, { choice = S.choice, quality = S.quality, ask_yt = S.ask_yt, ask_local = S.ask_local,
         anime = S.anime, even = S.even, headroom = S.headroom, audio_delay = S.audio_delay,
-        fill_mode = S.fill_mode, fill_balance = S.fill_balance, yt_cookies = S.yt_cookies })
+        fill_mode = S.fill_mode, fill_balance = S.fill_balance, yt_cookies = S.yt_cookies,
+        top_level = S.top_level, anime4k = S.anime4k, guard = S.guard })
 end
 
 local function osd_size()
@@ -122,12 +128,20 @@ end
 local function quoted(s) return "%" .. #s .. "%" .. s end  -- mpv option quoting, safe for C:\ paths and JSON
 
 -- Calibration written by build_engines.py: {level = output fps at 2x} per frame size.
+-- Files without "ladder": 2 predate the optional heavy level at the top of the ladder: shift their keys by one.
 local function cal(w, h)
     local t = read_json(ENGINES .. "/cal_" .. w .. "x" .. h .. ".json")
+    local shift = (t and t.ladder == 2) and 0 or 1
     local out = {}
     for k, v in pairs(t and t.levels or {}) do
-        if type(v) == "number" then out[tonumber(k)] = v end
+        if type(v) == "number" then out[tonumber(k) + shift] = v end
     end
+    return out
+end
+-- Levels the user allows: everything from the chosen best model down.
+local function usable(c)
+    local out = {}
+    for k, v in pairs(c) do if k >= S.top_level then out[k] = v end end
     return out
 end
 local function cal_count(w, h) local n = 0 for _ in pairs(cal(w, h)) do n = n + 1 end return n end
@@ -148,7 +162,11 @@ local function nearest_cal(w, h)
     if not best then return cal(REF_W, REF_H), REF_W, REF_H end
     return best, bw, bh
 end
-local function ref_ready() return cal_count(REF_W, REF_H) >= #LADDER end
+local function ref_ready()
+    local c = cal(REF_W, REF_H)
+    for i = 1, #LADDER do if required(i) and not c[i] then return false end end
+    return true
+end
 
 local function video_size()
     local vp = mp.get_property_native("video-params") or {}
@@ -293,7 +311,7 @@ local function sync_ui()
     mp.set_property_native("user-data/midframe/status", status)
 end
 
-local apply, draw_home, retarget, modal_redraw, draw_debug
+local apply, draw_home, retarget, modal_redraw, draw_debug, loading_close
 
 -- Engine builds run one at a time in a subprocess (minutes each); playback stays plain meanwhile.
 local function start_build(job)
@@ -314,7 +332,7 @@ local function start_build(job)
         S.building = nil
         local full = (res and ((res.stdout or "") .. (res.stderr or ""))) or ""
         if ok and res.status == 0 then
-            if not job.level then notice("RIFE ready", 3, "good") end
+            if job.ref then notice("RIFE ready", 3, "good") end
         else
             local err = (full:match("([^\n]*%S)%s*$") or "unknown error"):gsub("%s+$", "")
             msg.error("engine build failed: " .. full)
@@ -330,7 +348,7 @@ local function start_build(job)
 end
 
 local function ensure_ref()
-    if not ref_ready() then start_build({ w = REF_W, h = REF_H }) end
+    if not ref_ready() then start_build({ w = REF_W, h = REF_H, level = FIRST, ref = true }) end
 end
 
 apply = function()
@@ -354,7 +372,7 @@ apply = function()
     end
     local step = S.fps_steps[lv.fps]
     local json = utils.format_json({
-        num = step.num, den = step.den, level = lv.rife, anime = S.anime,
+        num = step.num, den = step.den, level = lv.rife, anime = S.anime, guard = S.guard,
         engines = ENGINES, matrix = S.matrix, range = S.range,
     })
     S.added = true
@@ -377,8 +395,14 @@ retarget = function()
     local w, h = video_size()
     local start = 1
     if w then
+        -- an optional (heavy) model picked as best but not yet measured for this size: build it first
+        if S.top_level < FIRST and not cal(w, h)[S.top_level] and not S.building then
+            start_build({ w = w, h = h, level = S.top_level })
+            notice("Preparing " .. LADDER[S.top_level].label .. " for " .. size_label(w, h) ..
+                " (first time, several minutes)… playing original fps", 8, "warn")
+        end
         local ref, rw, rh = nearest_cal(w, h)
-        start = auto.start_level(cal(w, h), ref, rw, rh, w, h, auto.rife_per_s(tn, td, S.src_num, S.src_den), #LADDER)
+        start = auto.start_level(usable(cal(w, h)), usable(ref), rw, rh, w, h, auto.rife_per_s(tn, td, S.src_num, S.src_den), #LADDER)
     end
     S.auto = auto.new(S.levels, mp.get_time(), start)
     apply()
@@ -433,6 +457,7 @@ mp.observe_property("video-params", "native", try_setup)
 mp.observe_property("container-fps", "number", try_setup)
 mp.register_event("end-file", function(e)
     S.ended_at = mp.get_time()
+    loading_close()
     reset_fill()
     remove()
     if e and e.reason == "error" then  -- say why instead of dropping back to the home screen silently
@@ -447,6 +472,7 @@ mp.register_event("end-file", function(e)
     sync_ui()
 end)
 mp.register_event("file-loaded", function()
+    loading_close()
     local path = mp.get_property("path")
     for _, r in ipairs(S.recents) do  -- per-video fill choice, before the first frame shows
         if r.path == path then
@@ -597,6 +623,21 @@ local function apply_ytdl_options()
     elseif S.yt_cookies and S.yt_cookies ~= "none" then raw["cookies-from-browser"] = S.yt_cookies end
     mp.set_property_native("ytdl-raw-options", raw)
 end
+-- Anime4K (MIT, bloc97) runs as mpv GLSL shaders on the rendered frames, after RIFE: it never touches the filter.
+-- The "fast" chains from the Anime4K mpv preset; A = 1080p anime, B = 720p, C = 480p.
+local A4K = {
+    { label = "Off", value = "off", chain = {} },
+    { label = "Mode A · 1080p anime", value = "a", chain = { "Clamp_Highlights", "Restore_CNN_M", "Upscale_CNN_x2_M", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_S" } },
+    { label = "Mode B · 720p anime", value = "b", chain = { "Clamp_Highlights", "Restore_CNN_Soft_M", "Upscale_CNN_x2_M", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_S" } },
+    { label = "Mode C · 480p anime", value = "c", chain = { "Clamp_Highlights", "Upscale_Denoise_CNN_x2_M", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_S" } },
+}
+local function a4k_entry() for _, m in ipairs(A4K) do if m.value == S.anime4k then return m end end return A4K[1] end
+local function apply_shaders()
+    local list = {}
+    for _, name in ipairs(a4k_entry().chain) do list[#list + 1] = expand("~~/shaders/Anime4K_" .. name .. ".glsl") end
+    mp.set_property_native("glsl-shaders", list)
+end
+apply_shaders()
 mp.command_native_async({ name = "subprocess", playback_only = false, capture_stdout = true, args = { "where.exe", "node" } },
     function(ok, res) S.has_node = ok and res.status == 0; apply_ytdl_options() end)
 
@@ -665,6 +706,10 @@ local function modal_unbind()
 end
 local function modal_close()
     if not Modal.kind then modal_unbind(); return end
+    if Modal.kind == "loading" and S.loading then  -- closed from anywhere (sheet, file-loaded, cancel): stop the ticker
+        if S.loading.timer then S.loading.timer:kill() end
+        S.loading = nil
+    end
     local kind = Modal.kind
     ulog("close", kind)
     Modal.kind, Modal.build, Modal.canvas = nil, nil, nil
@@ -765,7 +810,7 @@ end
 local function sheet_args()
     local w, h = sheet_dims()
     local ref, rw, rh = nearest_cal(w, h)
-    return { src_num = SH.src_num, src_den = SH.src_den, cap = cap(), exact = cal(w, h), ref = ref,
+    return { src_num = SH.src_num, src_den = SH.src_den, cap = cap(), exact = usable(cal(w, h)), ref = usable(ref),
         ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }
 end
 local function custom_valid(text)
@@ -850,7 +895,7 @@ end
 local function quick_model(W, H)
     local w, h = video_size()
     local ref, rw, rh = nearest_cal(w or REF_W, h or REF_H)
-    local a = { src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H), ref = ref,
+    local a = { src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = usable(cal(w or REF_W, h or REF_H)), ref = usable(ref),
         ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }
     local even, other = sheet.rates(a)
     local t = target()
@@ -875,11 +920,17 @@ local function setting_options(key)
     elseif key == "audio" then for _, a in ipairs(AUDIO_OFFSETS) do out[#out + 1] = { label = (a > 0 and "+" or "") .. a .. " ms", value = a } end
     elseif key == "fill_mode" then for _, m in ipairs(fill.MODES) do out[#out + 1] = { label = fill.LABELS[m], value = m } end
     elseif key == "fill_balance" then for _, b in ipairs({ 0, 0.25, 0.5, 0.75, 1 }) do out[#out + 1] = { label = string.format("%d%% zoom · %d%% stretch", b * 100, 100 - b * 100), value = b } end
-    elseif key == "yt_cookies" then for _, b in ipairs(YT_BROWSERS) do out[#out + 1] = b end end
+    elseif key == "yt_cookies" then for _, b in ipairs(YT_BROWSERS) do out[#out + 1] = b end
+    elseif key == "top_level" then
+        for i, l in ipairs(LADDER) do
+            if l.scale == 1 then out[#out + 1] = { label = l.label .. (i == FIRST and " (recommended)" or l.optional and " (sharpest, slow)" or " (fastest)"), value = i } end
+        end
+    elseif key == "anime4k" then for _, m in ipairs(A4K) do out[#out + 1] = { label = m.label, value = m.value } end end
     return out
 end
 local function setting_value(key)
-    return ({ choice = S.choice, quality = S.quality, headroom = S.headroom, audio = S.audio_delay or 0, fill_mode = S.fill_mode, fill_balance = S.fill_balance, yt_cookies = S.yt_cookies })[key]
+    return ({ choice = S.choice, quality = S.quality, headroom = S.headroom, audio = S.audio_delay or 0, fill_mode = S.fill_mode, fill_balance = S.fill_balance, yt_cookies = S.yt_cookies,
+        top_level = S.top_level, anime4k = S.anime4k })[key]
 end
 local function set_setting(key, value)
     if key == "choice" then S.choice = value; if S.src_num then retarget() end
@@ -888,6 +939,8 @@ local function set_setting(key, value)
     elseif key == "audio" then S.audio_delay = value; mp.set_property_number("audio-delay", value / 1000)
     elseif key == "fill_mode" then S.fill_mode = value; apply_fill(); sync_ui()
     elseif key == "fill_balance" then S.fill_balance = value; apply_fill(); sync_ui()
+    elseif key == "top_level" then S.top_level = value; if S.src_num then retarget() end
+    elseif key == "anime4k" then S.anime4k = value; apply_shaders()
     elseif key == "yt_cookies" then
         S.yt_cookies = value; apply_ytdl_options()
         if value == "file" and not utils.file_info(COOKIES_FILE) then
@@ -903,9 +956,15 @@ local function engines_model()
         local n = 0
         local vals = {}
         for i = 1, #LADDER do if c[i] then n = n + 1; vals[i] = string.format("%d", math.floor(c[i] + 0.5)) end end
+        local ready = true
+        for i = 1, #LADDER do if required(i) and not c[i] then ready = false end end
         local state = (S.building and S.building.w == s[2] and S.building.h == s[3]) and "building"
-            or (n >= #LADDER and "ready") or (n > 0 and "partial") or "none"
-        out[#out + 1] = { name = s[1], dim = size_label(s[2], s[3]), w = s[2], h = s[3], state = state, count = n, vals = n > 0 and vals or nil }
+            or (ready and "ready") or (n > 0 and "partial") or "none"
+        -- first optional (heavy) level this size hasn't measured yet: offered as a manual build
+        local missing
+        for i = 1, #LADDER do if LADDER[i].optional and not c[i] then missing = i; break end end
+        out[#out + 1] = { name = s[1], dim = size_label(s[2], s[3]), w = s[2], h = s[3], state = state, count = n, vals = n > 0 and vals or nil,
+            optional = missing and { level = missing, label = LADDER[missing].label:gsub("^RIFE ", "") } or nil }
     end
     return out
 end
@@ -927,10 +986,11 @@ local function settings_model(W, H)
         W = W, H = H, tab = TAB, ladder = LADDER, scroll = S.settings_scroll or 0,
         dropdown = S.dropdown and { key = S.dropdown, options = setting_options(S.dropdown), selected = setting_value(S.dropdown) } or nil,
         playback = { ask_yt = S.ask_yt, ask_local = S.ask_local, rate_label = label_choice(S.choice), quality_label = label_quality(S.quality),
-            anime = S.anime, even = S.even, headroom_label = string.format("%.1f×", S.headroom) .. (S.headroom == 1.5 and " (recommended)" or ""),
+            anime = S.anime, guard = S.guard, even = S.even, headroom_label = string.format("%.1f×", S.headroom) .. (S.headroom == 1.5 and " (recommended)" or ""),
             audio_label = string.format("%d ms", S.audio_delay or 0),
             fill_label = fill.LABELS[S.fill_mode], balance_label = string.format("%d%% zoom · %d%% stretch", S.fill_balance * 100, 100 - S.fill_balance * 100),
-            cookies_label = (function() for _, b in ipairs(YT_BROWSERS) do if b.value == S.yt_cookies then return b.label end end return "None" end)() },
+            cookies_label = (function() for _, b in ipairs(YT_BROWSERS) do if b.value == S.yt_cookies then return b.label end end return "None" end)(),
+            model_label = (LADDER[S.top_level] or LADDER[FIRST]).label, anime4k_label = a4k_entry().label },
         engines = engines_model(), checks = checks_model(),
         keys = { { "Ctrl+O", "Open a file" }, { "Ctrl+V", "Play the link in the clipboard" }, { "F", "Frame-rate menu" },
             { "z", "Picture fill: Fit / Fill / Zoom / Stretch" }, { "d", "Debug overlay" }, { "Ctrl+,", "Settings" }, { "Space", "Play / pause" }, { "← →", "Seek 5 s" }, { "F11", "Fullscreen (or double-click)" },
@@ -970,11 +1030,27 @@ end
 mp.observe_property("idle-active", "bool", draw_home)
 
 -- ---------- opening files / links ----------
+local function loading_model(W, H)
+    return home.loading({ W = W, H = H, url = S.loading and S.loading.url, elapsed = S.loading and (mp.get_time() - S.loading.t) or 0 })
+end
+loading_close = function()
+    if S.loading then
+        if S.loading.timer then S.loading.timer:kill() end
+        S.loading = nil
+    end
+    if Modal.kind == "loading" then modal_close() end
+end
 local function play_path(path, pos)
     if not path or path == "" then return end
     -- mpv >= 0.38: loadfile <url> <flags> <index> <options>; the index slot must be given to pass options
     if pos and pos > 5 then mp.commandv("loadfile", path, "replace", -1, "start=" .. string.format("%.1f", pos))
     else mp.commandv("loadfile", path, "replace") end
+    if is_url(path) then  -- yt-dlp takes a few seconds: show a loader instead of a black window
+        loading_close()
+        S.loading = { url = path, t = mp.get_time() }
+        modal_show("loading", loading_model)
+        S.loading.timer = mp.add_periodic_timer(1 / 12, function() if Modal.kind == "loading" then modal_redraw() end end)
+    end
 end
 local function open_file_dialog()
     local ps = "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; " ..
@@ -1014,7 +1090,14 @@ mp.add_key_binding("ctrl+o", "open-file", open_file_dialog)
 mp.add_key_binding("ctrl+v", "paste", play_clipboard)
 
 -- ---------- actions from every surface ----------
+local function handle_loading(a)
+    if a.kind == "cancel" or (a.kind == "key" and a.key == "ESC") then
+        mp.commandv("stop")  -- end-file closes the loader and the home screen returns with idle
+        loading_close()
+    end
+end
 handle_action = function(a)
+    if Modal.kind == "loading" then return handle_loading(a) end
     local kind = Modal.kind
     if a.kind ~= "key" then ulog("action", tostring(kind), a.kind, tostring(a.value or a.choice or a.index or a.key or "")) end
     if kind == "home" then
@@ -1080,8 +1163,8 @@ handle_action = function(a)
         elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
             local w, h = video_size()
             local ref, rw, rh = nearest_cal(w or REF_W, h or REF_H)
-            local c = step_choice(rate_list({ src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H),
-                ref = ref, ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }), a.key == "RIGHT" and 1 or -1)
+            local c = step_choice(rate_list({ src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = usable(cal(w or REF_W, h or REF_H)),
+                ref = usable(ref), ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }), a.key == "RIGHT" and 1 or -1)
             if c then handle_action({ kind = "rate", choice = c }) end
         elseif a.kind == "key" and a.key == "SPACE" then
             S.qcustom = nil; modal_close(); mp.commandv("cycle", "pause")
@@ -1138,7 +1221,7 @@ handle_action = function(a)
             modal_redraw()
         elseif a.kind == "toggle" then
             S[a.key] = not S[a.key]; save_prefs()
-            if a.key == "anime" and S.added then retarget() end
+            if (a.key == "anime" or a.key == "guard") and S.added then retarget() end
             modal_redraw()
         elseif a.kind == "cycle" then  -- a select box: open its dropdown (or close it if already open)
             S.dropdown = S.dropdown ~= a.key and a.key or nil; modal_redraw()
@@ -1158,7 +1241,7 @@ handle_action = function(a)
             S.dropdown = nil; modal_redraw()
         elseif a.kind == "key" and a.key == "ESC" and S.dropdown then
             S.dropdown = nil; modal_redraw()
-        elseif a.kind == "prepare" then start_build({ w = a.w, h = a.h }); modal_redraw()
+        elseif a.kind == "prepare" then start_build({ w = a.w, h = a.h, level = a.level or FIRST }); modal_redraw()
         elseif a.kind == "config" then
             -- Explorer wants backslashes and no trailing separator, or it opens Documents instead
             local dir = expand("~~/"):gsub("/", "\\"):gsub("\\+$", "")
@@ -1219,11 +1302,11 @@ mp.add_hook("on_preloaded", 50, function(hook)
     local path = mp.get_property("path")
     local url = is_url(path)
     if url then apply_quality() end  -- the remembered quality, before any frame decodes
-    if not (url and S.ask_yt or not url and S.ask_local) then return end
-    if S.last_prompt_path == path and mp.get_time() - (S.ended_at or -1e9) < 15 then return end  -- immediate reload
+    if not (url and S.ask_yt or not url and S.ask_local) then return loading_close() end
+    if S.last_prompt_path == path and mp.get_time() - (S.ended_at or -1e9) < 15 then return loading_close() end  -- immediate reload
     S.last_prompt_path = path
     hook:defer()
-    if not open_sheet(url and "yt" or "local", hook) then hook:cont() end
+    if not open_sheet(url and "yt" or "local", hook) then loading_close(); hook:cont() end
 end)
 
 -- Debug overlay (toggle with D).
@@ -1250,6 +1333,11 @@ local function draw()
         delayed = mp.get_property_number("vo-delayed-frame-count"),
         vram_mb = S.vram_mb, gpu_mhz = S.gpu_mhz, gpu_max_mhz = S.gpu_max_mhz, gpu_pstate = S.gpu_pstate,
         seek_ms = S.seek_ms, hist = S.hist, fill = fill_summary(),
+        shaders = (function()
+            local n = #(mp.get_property_native("glsl-shaders") or {})
+            if n == 0 then return S.anime4k ~= "off" and (a4k_entry().label .. " · not applied!") or "none" end
+            return string.format("Anime4K %s · %d passes", a4k_entry().label, n)
+        end)(),
     })
     ov:update()
 end

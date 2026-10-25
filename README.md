@@ -37,7 +37,7 @@ Tested on an RTX 4050 Laptop (6 GB): 1080p at 2× and 3× and YouTube 1080p 30�
 
 | | |
 |---|---|
-| **Real-time AI interpolation** | RIFE 4.26 and 4.6 on NVIDIA TensorRT. 1.5×, 2×, 2.5×, 3×, a fixed 60/90/120/144, or any value you type. |
+| **Real-time AI interpolation** | RIFE 4.26, 4.6 and optionally 4.25 heavy on NVIDIA TensorRT. 1.5×, 2×, 2.5×, 3×, a fixed 60/90/120/144, or any value you type. |
 | **Local files and YouTube** | Drag a file in or paste a link. YouTube quality from 480p to 2160p, switchable without reloading. |
 | **Never stutters** | Every engine is benchmarked once on *your* GPU. A video starts at the level that keeps up and steps down rather than drop frames. |
 | **Picture fill** | Removes black bars without touching interpolation: detects letterboxing, then blends zoom and stretch so neither is extreme. Manual values too. |
@@ -145,7 +145,7 @@ Choices are remembered per video; Settings → Playback → Picture sets the def
 
 | Tab | What's there |
 |---|---|
-| **Playback** | Ask before YouTube / local files, default frame rate and quality, YouTube sign-in, faithful anime mode, prefer even frame rates, headroom, picture fill defaults, audio offset |
+| **Playback** | Ask before YouTube / local files, default frame rate and quality, YouTube sign-in, faithful anime mode, prefer even frame rates, headroom, **best RIFE model**, picture fill defaults, **Anime4K upscaling**, audio offset |
 | **Engines** | Per-resolution engine status with measured speeds; *Prepare now* builds a size ahead of time |
 | **System** | GPU preference, refresh rate / G-SYNC (measured during playback), engines, driver |
 | **Keys** | The table above |
@@ -179,7 +179,16 @@ display-resample timing. Picture fill happens in the renderer afterwards, so it 
 starts at the best level whose measured speed covers the frames it needs with 50% headroom; unmeasured sizes are
 estimated from the nearest measured one. The ladder, best quality first:
 
-> RIFE 4.26 → RIFE 4.6 → RIFE 4.6 half scale → RIFE 4.6 quarter scale → lower target fps → original fps
+> (RIFE 4.25 heavy) → RIFE 4.26 → RIFE 4.6 → RIFE 4.6 half scale → RIFE 4.6 quarter scale → lower target fps → original fps
+
+**Best RIFE model** (Settings → Playback). Auto starts at this level and only steps down. The default is RIFE 4.26,
+the best quality-per-frame. **RIFE 4.25 heavy** is sharper on difficult motion but 2–3× slower, so it is optional:
+its engine is built the first time you pick it, and Auto still falls back to 4.26 when it can't hold the target rate.
+
+**Anime4K** (Settings → Playback → Picture). The fast Mode A / B / C shader chains from
+[Anime4K](https://github.com/bloc97/Anime4K) (1080p / 720p / 480p anime), run by mpv on the rendered picture after
+interpolation. They never touch the RIFE filter, but they cost GPU time at the *output* frame rate, so on a small GPU
+expect Auto to step down a level when they are on.
 
 **Auto mode.** During playback it only ever steps down (a level change reloads the filter, a 1–2 s pause), and a
 level that failed stays blocked until the next file. If the filter itself fails (driver, VRAM) the video keeps
@@ -259,5 +268,5 @@ Issues with an overlay screenshot and `midframe.log` are the most useful thing y
 
 Midframe's own code is MIT (see `LICENSE`). The installer bundles third-party software under its own terms:
 mpv (GPL-2.0+/LGPL-2.1+), VapourSynth (LGPL-2.1), vs-mlrt (GPL-3.0) with NVIDIA TensorRT and CUDA runtime
-libraries (NVIDIA EULA, redistributable), the RIFE models (MIT, from the vs-mlrt model releases), uosc (LGPL-3.0),
+libraries (NVIDIA EULA, redistributable), the RIFE models (MIT, from the vs-mlrt model releases), Anime4K shaders (MIT, bloc97), uosc (LGPL-3.0),
 yt-dlp (Unlicense). Streaming a site's content is subject to that site's terms.

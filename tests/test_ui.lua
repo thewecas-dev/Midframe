@@ -4,8 +4,8 @@ local home = require "home"
 local settings = require "settings"
 
 local function eq(a, b, msg) assert(a == b, (msg or "") .. ": expected " .. tostring(b) .. ", got " .. tostring(a)) end
-local LADDER = { { label = "RIFE 4.26" }, { label = "RIFE 4.6" }, { label = "RIFE 4.6 half" }, { label = "RIFE 4.6 quarter" } }
-local CAL = { 45.5, 92.8, 134.0, 145.2 }  -- the RTX 4050 at 1080p
+local LADDER = { { label = "RIFE 4.25 heavy", optional = true, scale = 1 }, { label = "RIFE 4.26", scale = 1 }, { label = "RIFE 4.6", scale = 1 }, { label = "RIFE 4.6 half", scale = 0.5 }, { label = "RIFE 4.6 quarter", scale = 0.25 } }
+local CAL = { [2] = 45.5, [3] = 92.8, [4] = 134.0, [5] = 145.2 }  -- the RTX 4050 at 1080p (heavy not built)
 
 -- test_canvas_hit: last box wins, coordinates in design units
 local c = ui.canvas(100, 100)
@@ -86,7 +86,7 @@ local short = settings.render({ W = 1100, H = 560, tab = "playback", ladder = LA
     playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" } })
 assert(short.scroll_max > 0, "short drawer scrolls: " .. tostring(short.scroll_max))
 assert(short:render():find("\\clip(", 1, true), "content clipped")
-local tall = settings.render({ W = 1440, H = 1000, tab = "playback", ladder = LADDER,
+local tall = settings.render({ W = 1440, H = 1300, tab = "playback", ladder = LADDER,
     playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" } })
 eq(tall.scroll_max, 0, "tall drawer does not scroll")
 
@@ -96,15 +96,15 @@ local sc = settings.render({ W = 1440, H = 900, tab = "playback", ladder = LADDE
     version = "Midframe 0.2.0" })
 local sk = {}
 for _, b in ipairs(sc.boxes) do sk[b[5].kind] = (sk[b[5].kind] or 0) + 1 end
-eq(sk.toggle, 4, "four toggles"); eq(sk.tab, 4); assert(sk.close >= 1)
-assert(sk.cycle == 6 and sc.scroll_max > 0, "last select is below the fold at 900 px, drawer scrolls")
-sc = settings.render({ W = 1440, H = 1200, tab = "playback", ladder = LADDER,
+eq(sk.toggle, 5, "five toggles"); eq(sk.tab, 4); assert(sk.close >= 1)
+assert(sk.cycle < 9 and sc.scroll_max > 0, "last selects are below the fold at 900 px, drawer scrolls")
+sc = settings.render({ W = 1440, H = 1300, tab = "playback", ladder = LADDER,
     playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" } })
 sk = {}
 for _, b in ipairs(sc.boxes) do sk[b[5].kind] = (sk[b[5].kind] or 0) + 1 end
-eq(sk.cycle, 7, "seven selects when everything fits")
+eq(sk.cycle, 9, "nine selects when everything fits")
 sc = settings.render({ W = 1440, H = 900, tab = "engines", ladder = LADDER,
-    engines = { { name = "1080p", dim = "1920×1080", w = 1920, h = 1080, state = "ready", vals = { 45, 93, 134, 145 } },
+    engines = { { name = "1080p", dim = "1920×1080", w = 1920, h = 1080, state = "ready", vals = { nil, 45, 93, 134, 145 } },
         { name = "4K", dim = "3840×2160", w = 3840, h = 2160, state = "none" } } })
 sk = {}
 for _, b in ipairs(sc.boxes) do sk[b[5].kind] = (sk[b[5].kind] or 0) + 1 end

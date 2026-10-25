@@ -99,15 +99,21 @@ function M.render(m)
         group("INTERPOLATION")
         h = row(c, x, w, y, "Faithful anime mode", "Keeps held drawings held and never blends across a cut")
         ui.toggle(c, x + w - 40, y + 4, p.anime); c:box(x, y, w, h, { kind = "toggle", key = "anime" }); y = y + h + 6
+        h = row(c, x, w, y, "Protect static text and logos", "Pixels that don't move between frames (burned-in subtitles, logos) are kept from the source, not interpolated")
+        ui.toggle(c, x + w - 40, y + 4, p.guard ~= false); c:box(x, y, w, h, { kind = "toggle", key = "guard" }); y = y + h + 6
         h = row(c, x, w, y, "Prefer even frame rates", "Pre-selects a rate that divides your display refresh")
         ui.toggle(c, x + w - 40, y + 4, p.even); c:box(x, y, w, h, { kind = "toggle", key = "even" }); y = y + h + 6
         h = row(c, x, w, y, "Headroom", "How much faster than needed an engine must measure")
-        select_box(c, x + w, y, p.headroom_label, { kind = "cycle", key = "headroom" }, true, m.dropdown and m.dropdown.key == "headroom"); y = y + h + 14
+        select_box(c, x + w, y, p.headroom_label, { kind = "cycle", key = "headroom" }, true, m.dropdown and m.dropdown.key == "headroom"); y = y + h + 6
+        h = row(c, x, w, y, "Best RIFE model", "Auto starts here and steps down to faster models when needed. Heavy is sharper but 2–3× slower")
+        select_box(c, x + w, y, p.model_label or "", { kind = "cycle", key = "top_level" }, true, m.dropdown and m.dropdown.key == "top_level"); y = y + h + 14
         group("PICTURE")
         h = row(c, x, w, y, "Fill mode for new videos", "Fit shows the file as encoded; Fill blends zoom and stretch to remove black bars")
         select_box(c, x + w, y, p.fill_label or "Fit", { kind = "cycle", key = "fill_mode" }, true, m.dropdown and m.dropdown.key == "fill_mode"); y = y + h + 6
         h = row(c, x, w, y, "Zoom / stretch balance", "How Fill splits the difference. Press z or use the bar button per video")
-        select_box(c, x + w, y, p.balance_label or "50% zoom · 50% stretch", { kind = "cycle", key = "fill_balance" }, true, m.dropdown and m.dropdown.key == "fill_balance"); y = y + h + 14
+        select_box(c, x + w, y, p.balance_label or "50% zoom · 50% stretch", { kind = "cycle", key = "fill_balance" }, true, m.dropdown and m.dropdown.key == "fill_balance"); y = y + h + 6
+        h = row(c, x, w, y, "Anime4K upscaling", "GLSL shaders on the rendered picture, after interpolation. Costs GPU time at the output frame rate")
+        select_box(c, x + w, y, p.anime4k_label or "Off", { kind = "cycle", key = "anime4k" }, true, m.dropdown and m.dropdown.key == "anime4k"); y = y + h + 14
         group("AUDIO")
         h = row(c, x, w, y, "Audio offset", "Positive delays audio. Ctrl+− / Ctrl++ during playback")
         select_box(c, x + w, y, p.audio_label, { kind = "cycle", key = "audio" }, true, m.dropdown and m.dropdown.key == "audio"); y = y + h
@@ -115,18 +121,24 @@ function M.render(m)
         c:text(x, y + 8, 4, 12, C.muted, "Each frame size needs its own TensorRT engines, built once and")
         c:text(x, y + 26, 4, 12, C.muted, "measured on this GPU. Numbers are output fps at 2×.")
         y = y + 48
+        local req = 0
+        for _, l in ipairs(m.ladder or {}) do if not l.optional then req = req + 1 end end
         for _, e in ipairs(m.engines or {}) do
             local ch = e.vals and 108 or 60
             c:rect(x, y, w, ch, 12, C.raised, 0, C.border, 1)
             c:text(x + 14, y + 22, 4, 14, C.text, e.name, { bold = true })
             c:text(x + 14 + ui.textw(e.name, 14, true) + 10, y + 22, 4, 12, C.faint, e.dim)
-            if e.state == "ready" then
-                local pw = ui.textw("All 4 levels measured", 12) + 34
-                ui.pill(c, x + w - 14 - pw, y + 9, "All 4 levels measured", "good")
-            elseif e.state == "partial" then
-                local l = e.count .. " of " .. #m.ladder .. " built"
+            if e.state == "ready" or e.state == "partial" then
+                local l = e.state == "ready" and ("All " .. req .. " levels measured") or (e.count .. " of " .. req .. " built")
                 local pw = ui.textw(l, 12) + 34
-                ui.pill(c, x + w - 14 - pw, y + 9, l, "warn")
+                ui.pill(c, x + w - 14 - pw, y + 9, l, e.state == "ready" and "good" or "warn")
+                if e.optional then  -- heavy model not built for this size: build it ahead of time
+                    local bl = "Build " .. e.optional.label
+                    local bw = ui.textw(bl, 13, true) + 28
+                    local bx = x + w - 14 - pw - 10 - bw
+                    ui.button(c, bx, y + 6, bw, 32, bl, "ghost")
+                    c:box(bx, y + 6, bw, 32, { kind = "prepare", w = e.w, h = e.h, level = e.optional.level })
+                end
             elseif e.state == "building" then
                 local pw = ui.textw("Building…", 12) + 34
                 ui.pill(c, x + w - 14 - pw, y + 9, "Building…", "accent")
@@ -142,7 +154,7 @@ function M.render(m)
                     c:rect(cx, y + 48, cw, 46, 8, C.surface)
                     local v = e.vals[i]
                     c:text(cx + 10, y + 63, 4, 13, v and C.text or C.faint, v and (v .. " fps") or "—", { bold = true })
-                    c:text(cx + 10, y + 81, 4, 10, C.muted, ui.fit(m.ladder[i].label:gsub("^RIFE ", i <= 2 and "RIFE " or ""), 10, cw - 14))
+                    c:text(cx + 10, y + 81, 4, 10, C.muted, ui.fit(m.ladder[i].label:gsub("^RIFE ", ""), 10, cw - 14))
                 end
             end
             y = y + ch + 10

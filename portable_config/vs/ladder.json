@@ -1,6 +1,7 @@
 [
-  {"label": "RIFE 4.26",         "model": 426, "scale": 1.0,  "impl": 2},
-  {"label": "RIFE 4.6",          "model": 46,  "scale": 1.0,  "impl": 1},
-  {"label": "RIFE 4.6 half",     "model": 46,  "scale": 0.5,  "impl": 1},
-  {"label": "RIFE 4.6 quarter",  "model": 46,  "scale": 0.25, "impl": 1}
+  {"label": "RIFE 4.25 heavy",  "model": 4252, "scale": 1.0,  "impl": 1, "pad": 64, "optional": true},
+  {"label": "RIFE 4.26",         "model": 426,  "scale": 1.0,  "impl": 2},
+  {"label": "RIFE 4.6",          "model": 46,   "scale": 1.0,  "impl": 1},
+  {"label": "RIFE 4.6 half",     "model": 46,   "scale": 0.5,  "impl": 1},
+  {"label": "RIFE 4.6 quarter",  "model": 46,   "scale": 0.25, "impl": 1}
 ]

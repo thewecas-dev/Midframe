@@ -38,13 +38,15 @@ def test_source_fps_fallback():
 
 
 def test_padded_size():
-    # level 1/2: scale 1 -> multiple of 32; level 3: 64; level 4: 128
+    # level 1 (heavy): 64; levels 2/3: scale 1 -> multiple of 32; level 4: 64; level 5: 128
     assert mf_vs.padded_size(1, 1920, 1080) == (1920, 1088)
-    assert mf_vs.padded_size(3, 1920, 1080) == (1920, 1088)
-    assert mf_vs.padded_size(4, 1920, 1080) == (1920, 1152)
-    assert mf_vs.padded_size(4, 3840, 2160) == (3840, 2176)
-    assert mf_vs.padded_size(1, 1280, 720) == (1280, 736)
-    assert mf_vs.padded_size(2, 1024, 768) == (1024, 768)
+    assert mf_vs.padded_size(2, 1920, 1080) == (1920, 1088)
+    assert mf_vs.padded_size(4, 1920, 1080) == (1920, 1088)
+    assert mf_vs.padded_size(5, 1920, 1080) == (1920, 1152)
+    assert mf_vs.padded_size(5, 3840, 2160) == (3840, 2176)
+    assert mf_vs.padded_size(2, 1280, 720) == (1280, 736)
+    assert mf_vs.padded_size(3, 1024, 768) == (1024, 768)
+    assert mf_vs.padded_size(1, 1280, 720) == (1280, 768)
 
 
 def test_cal_roundtrip():
@@ -53,6 +55,10 @@ def test_cal_roundtrip():
         assert mf_vs.read_cal(d, 1920, 1080) == {}
         mf_vs.write_cal(d, 1920, 1080, {3: 105.0, 1: 42.6})
         assert mf_vs.read_cal(d, 1920, 1080) == {1: 42.6, 3: 105.0}
+        # legacy file without the ladder marker: keys predate the heavy level, shift by one
+        with open(mf_vs.cal_path(d, 1280, 720), "w") as f:
+            json.dump({"w": 1280, "h": 720, "levels": {"1": 90, "4": 200}}, f)
+        assert mf_vs.read_cal(d, 1280, 720) == {2: 90, 5: 200}
         with open(mf_vs.cal_path(d, 1920, 1080), "w") as f:
             f.write("garbage")
         assert mf_vs.read_cal(d, 1920, 1080) == {}
@@ -61,8 +67,8 @@ def test_cal_roundtrip():
 def test_parse_params():
     good = {"num": 60000, "den": 1001, "level": 1, "anime": True, "engines": "C:/e",
             "matrix": "709", "range": "limited"}
-    assert mf_vs.parse_params(json.dumps(good)) == good
-    for bad in ({**good, "level": 0}, {**good, "level": 5}, {**good, "num": True},
+    assert mf_vs.parse_params(json.dumps(good)) == {**good, "guard": True}
+    for bad in ({**good, "level": 0}, {**good, "level": 6}, {**good, "num": True},
                 {k: v for k, v in good.items() if k != "num"}, {**good, "matrix": "evil"}):
         assert raises(mf_vs.parse_params, json.dumps(bad)), bad
     assert raises(mf_vs.parse_params, "not json")

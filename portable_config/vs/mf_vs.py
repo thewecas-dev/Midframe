@@ -12,6 +12,7 @@ with open(os.path.join(HERE, "ladder.json"), encoding="utf-8") as _f:
     LADDER = json.load(_f)
 
 DUP_THRESHOLD = 0.0015    # luma PlaneStatsDiff below this = same anime drawing held
+STATIC_EPS = 3 / 255      # per-pixel luma change below this between neighbours = static pixel (noise is 1-2 levels)
 SCENE_THRESHOLD = 0.12    # luma PlaneStatsDiff above this = hard scene cut
 MAX_SRC_FRAMES = 8_000_000  # video_in reports a bogus huge length; ~92h at 24fps
 MATRICES = {"709", "470bg", "170m", "2020ncl"}
@@ -59,6 +60,9 @@ def parse_params(user_data):
         v = p.get(key)
         if not isinstance(v, typ) or (typ is int and isinstance(v, bool)):
             raise ValueError(f"midframe: bad or missing {key!r}")
+    p.setdefault("guard", True)
+    if not isinstance(p["guard"], bool):
+        raise ValueError("midframe: bad 'guard'")
     if p["num"] <= 0 or p["den"] <= 0:
         raise ValueError("midframe: fps must be positive")
     if not 1 <= p["level"] <= len(LADDER):
@@ -73,9 +77,10 @@ PLUGINS = os.environ.get("MIDFRAME_VS_PLUGINS", os.path.join(HERE, "..", "..", "
 
 
 def pad_multiple(level):
-    """RIFE needs frame sizes divisible by 32/scale (v1 network). The v2 network pads internally,
-    but padding to 32 anyway costs <1% and keeps one code path if vsmlrt falls back to v1."""
-    return int(round(32 / LADDER[level - 1]["scale"]))
+    """RIFE needs frame sizes divisible by 32/scale (v1 network; 64 for the 4.25/4.26 heavy nets). The v2
+    network pads internally, but padding anyway costs <1% and keeps one code path if vsmlrt falls back to v1."""
+    step = LADDER[level - 1]
+    return int(round(step.get("pad", 32) / step["scale"]))
 
 
 def padded_size(level, width, height):
@@ -108,8 +113,10 @@ def rife(rgb, mult, level, engines):
     return out.std.Crop(right=pw, bottom=ph) if pw or ph else out
 
 
-# --- Calibration files: <engines>/cal_<w>x<h>.json = {"levels": {"1": out_fps_at_2x | null, ...}}
+# --- Calibration files: <engines>/cal_<w>x<h>.json = {"ladder": 2, "levels": {"1": out_fps_at_2x | null, ...}}
 # A level with a number has a built engine for that frame size and was measured on this GPU.
+# "ladder": 2 = keys index the current ladder; files without it predate the optional heavy level at the top.
+CAL_LADDER = 2
 
 def cal_path(engines, width, height):
     return os.path.join(engines, f"cal_{width}x{height}.json")
@@ -118,8 +125,9 @@ def cal_path(engines, width, height):
 def read_cal(engines, width, height):
     try:
         with open(cal_path(engines, width, height), encoding="utf-8") as f:
-            levels = json.load(f)["levels"]
-        return {int(k): v for k, v in levels.items() if v is not None}
+            d = json.load(f)
+        shift = 0 if d.get("ladder") == CAL_LADDER else 1
+        return {int(k) + shift: v for k, v in d["levels"].items() if v is not None}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
 
@@ -128,7 +136,7 @@ def write_cal(engines, width, height, levels):
     os.makedirs(engines, exist_ok=True)
     tmp = cal_path(engines, width, height) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"w": width, "h": height, "levels": {str(k): v for k, v in sorted(levels.items())}}, f)
+        json.dump({"w": width, "h": height, "ladder": CAL_LADDER, "levels": {str(k): v for k, v in sorted(levels.items())}}, f)
     os.replace(tmp, cal_path(engines, width, height))
 
 
@@ -163,11 +171,26 @@ def build(video_in, container_fps, params):
     det_out = core.std.FrameEval(core.std.BlankClip(det, length=out_len, keep=True),
                                  lambda n: det[source_pos(n, mult)[0]])
 
+    # Static-pixel guard: pixels that don't change between the two neighbours (burned-in subtitles, logos,
+    # held backgrounds) come from the source instead of RIFE, which would drag them along with the motion.
+    shown = interp
+    if params.get("guard", True):
+        luma = core.resize.Point(core.std.ShufflePlanes(clip, 0, vs.GRAY), format=vs.GRAYS, range_in_s=params["range"], range_s="full")
+        static = core.std.Expr([luma, luma[1:]], f"x y - abs {STATIC_EPS} < 1 0 ?")
+        static = static.std.Minimum().std.Maximum().std.Maximum()  # drop speckle, then cover the anti-aliased edges
+        if static.format.id != interp.format.replace(color_family=vs.GRAY).id:
+            static = core.resize.Point(static, format=interp.format.replace(color_family=vs.GRAY).id)
+        blank = core.std.BlankClip(interp, length=interp.num_frames, keep=True)
+        src_out = core.std.FrameEval(blank, lambda n: src[source_pos(n, mult)[0]])
+        mask_out = core.std.FrameEval(core.std.BlankClip(static, length=interp.num_frames, keep=True),
+                                      lambda n: static[source_pos(n, mult)[0]])
+        shown = core.std.MaskedMerge(interp, src_out, mask_out)
+
     def select(n, f):
         k, frac = source_pos(n, mult)
         if should_hold(frac, f.props.get("PlaneStatsDiff", 0.05), anime):
             return src[k]  # held frames never touch the GPU: VapourSynth is lazy
-        return interp
+        return shown
 
     picked = core.std.FrameEval(core.std.BlankClip(interp, length=out_len, keep=True), select, prop_src=det_out)
     out = core.resize.Bicubic(picked, format=vs.YUV420P10, matrix_s=params["matrix"], range_s=params["range"])

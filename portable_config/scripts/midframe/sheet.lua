@@ -36,7 +36,7 @@ function M.rates(a)
         local hint
         if not plan.measured then hint = mult_label(t, src)
         elseif not plan.fits then hint = mult_label(t, src) .. " · too heavy"
-        elseif plan.level <= 2 then hint = mult_label(t, src) .. (even and (" · " .. math.floor(ratio + 0.5) .. " refreshes") or " · smooth")
+        elseif (a.ladder[plan.level].scale or 1) == 1 then hint = mult_label(t, src) .. (even and (" · " .. math.floor(ratio + 0.5) .. " refreshes") or " · smooth")
         else hint = mult_label(t, src) .. " · needs " .. a.ladder[plan.level].label:gsub("^RIFE ", "") end
         out[#out + 1] = { choice = choice, num = n, den = d, value = key, mult = t / src, even = even,
             refreshes = ratio, plan = plan, hint = hint, state = (plan.measured and not plan.fits) and "muted" or "default" }

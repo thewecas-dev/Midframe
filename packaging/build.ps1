@@ -12,7 +12,7 @@ $MLRT_TAG  = "v15.16"
 $UOSC_TAG  = "5.13.0"
 $YTDLP_TAG = "2026.10.21"
 # Must match portable_config\vs\ladder.json. rife_v2/ is the faster "v2" network used for RIFE 4.26.
-$RIFE_MODELS = @("rife/rife_v4.26.onnx", "rife_v2/rife_v4.26.onnx", "rife/rife_v4.6.onnx")
+$RIFE_MODELS = @("rife/rife_v4.25_heavy.onnx", "rife/rife_v4.26.onnx", "rife_v2/rife_v4.26.onnx", "rife/rife_v4.6.onnx")
 
 $root  = Split-Path $PSScriptRoot
 $build = "$root\build"
@@ -59,6 +59,7 @@ Expand-7z $part1 $plugins
 # RIFE models ship separately; each archive holds rife/<model>.onnx (v4.6 lives in the older rife_v8 bundle)
 $ext = "$gh/AmusementClub/vs-mlrt/releases/download"
 $modelArchives = @{
+    "rife/rife_v4.25_heavy.onnx" = "$ext/external-models/rife_v4.25_heavy.7z"
     "rife/rife_v4.26.onnx"    = "$ext/external-models/rife_v4.26.7z"
     "rife_v2/rife_v4.26.onnx" = "$ext/external-models/rife_v4.26.7z"
     "rife/rife_v4.6.onnx"     = "$ext/model-20220923/rife_v8.7z"

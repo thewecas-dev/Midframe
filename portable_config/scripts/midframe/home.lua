@@ -97,4 +97,28 @@ function M.render(m)
     return c
 end
 
+-- Loading screen while yt-dlp resolves a link (the window would otherwise sit black for a few seconds).
+-- m = { W, H, url, elapsed }
+function M.loading(m)
+    local W, H = m.W or ui.W, m.H or ui.H
+    local c = ui.canvas(W, H)
+    c:rect(0, 0, W, H, 0, C.bg)
+    c:box(0, 0, W, H, { kind = "none" })
+    local cy = H / 2
+    ui.mark(c, W / 2 - 20, cy - 92, 40)
+    c:text(W / 2, cy - 18, 5, 20, C.text, "Fetching video info…", { bold = true })
+    c:text(W / 2, cy + 10, 5, 13, C.muted, ui.fit(m.url or "", 13, W * 0.6))
+    -- progress strip: a dot that walks across, driven by elapsed time
+    local bw, bh = 220, 4
+    local bx = W / 2 - bw / 2
+    c:rect(bx, cy + 36, bw, bh, 2, C.overlay)
+    local t = (m.elapsed or 0) % 1.6 / 1.6
+    c:rect(bx + (bw - 48) * (t < 0.5 and t * 2 or (1 - t) * 2), cy + 36, 48, bh, 2, C.accent)
+    c:text(W / 2, cy + 64, 5, 12, C.faint, "yt-dlp is reading the formats · Esc cancels")
+    local kw = ui.textw("Cancel", 13, true) + 28
+    ui.button(c, W / 2 - kw / 2, cy + 84, kw, 32, "Cancel", "ghost")
+    c:box(W / 2 - kw / 2, cy + 84, kw, 32, { kind = "cancel" })
+    return c
+end
+
 return M

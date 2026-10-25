@@ -36,7 +36,7 @@ def fake_vsmlrt(out_format):
 
 import mf_vs  # noqa: E402
 
-PARAMS = json.dumps({"num": 60, "den": 1, "level": 1, "anime": True, "engines": "/tmp",
+PARAMS = json.dumps({"num": 60, "den": 1, "level": 2, "anime": True, "engines": "/tmp",
                      "matrix": "709", "range": "limited"})
 
 
@@ -54,6 +54,27 @@ def run(out_format, src_fps, w=1920, h=1080, frames=48):
         out.get_frame(n)  # every frame, held or interpolated, must come back in one format
     assert calls, "RIFE was never used"
     return out
+
+
+def test_static_guard():
+    """Left half identical in every frame (a logo), right half alternating (motion): on an interpolated frame the
+    left half is the source pixel, the right half is the fake RIFE output (0.5)."""
+    sys.modules["vsmlrt"] = fake_vsmlrt(vs.RGBS)
+    w, h = 1920, 1080
+    left = core.std.BlankClip(format=vs.YUV420P8, width=w // 2, height=h, length=1, color=[200, 128, 128])
+    ra = core.std.BlankClip(left, color=[100, 128, 128])
+    rb = core.std.BlankClip(left, color=[112, 128, 128])
+    a, b = core.std.StackHorizontal([left, ra]), core.std.StackHorizontal([left, rb])
+    video_in = core.std.Interleave([a * 24, b * 24])
+    params = mf_vs.parse_params(PARAMS)
+    out = mf_vs.build(video_in, 30, params)
+    f = out.get_frame(1)  # between source 0 and 1
+    y_left, y_right = int(f[0][h // 2, 100]), int(f[0][h // 2, w - 100])  # output is 10-bit limited YUV
+    assert abs(y_left - 800) < 12, y_left             # source luma 200 -> 800 in 10 bit
+    assert abs(y_right - 502) < 20, y_right           # RIFE stand-in grey 0.5 -> (0.5*219+16)*4
+    params["guard"] = False
+    f = mf_vs.build(video_in, 30, params).get_frame(1)
+    assert abs(int(f[0][h // 2, 100]) - 502) < 20, "guard off: RIFE output everywhere"
 
 
 def test_rife_outputs_float32():
@@ -88,7 +109,7 @@ def test_build_engines_writes_calibration():
         cal = build_engines.main(d, 1280, 720, ["3"])
         assert list(cal) == [3] and cal[3] > 0, cal
         cal = build_engines.main(d, 1280, 720)          # fills the rest, keeps level 3
-        assert sorted(cal) == [1, 2, 3, 4], cal
+        assert sorted(cal) == [1, 2, 3, 4, 5], cal
         assert mf_vs.read_cal(d, 1280, 720) == cal
 
 

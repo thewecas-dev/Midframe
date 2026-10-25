@@ -10,6 +10,37 @@ import os
 import sys
 import time
 
+
+def die_with_children():
+    """Windows: put this process in a job that kills every descendant (vsmlrt's trtexec) when it ends.
+    mpv kills the builder when the player quits; without this the trtexec build kept running, pinning the GPU
+    and corrupting the next measurements."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    job = k32.CreateJobObjectW(None, None)
+    JobObjectExtendedLimitInformation, KILL_ON_JOB_CLOSE = 9, 0x2000
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_ulonglong) for n in ("ReadOps", "WriteOps", "OtherOps", "ReadBytes", "WriteBytes", "OtherBytes")]
+
+    class BASIC(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER), ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+    class EXTENDED(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", BASIC), ("IoInfo", IO_COUNTERS), ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    info = EXTENDED()
+    info.BasicLimitInformation.LimitFlags = KILL_ON_JOB_CLOSE
+    k32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info))
+    k32.AssignProcessToJobObject(job, k32.GetCurrentProcess())  # the handle stays open for our lifetime on purpose
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mf_vs
 
@@ -51,4 +82,5 @@ def main(engines, width, height, levels=()):
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         sys.exit(__doc__)
+    die_with_children()
     main(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4:])

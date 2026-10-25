@@ -42,6 +42,7 @@ function M.render(st)
         { "dropped", string.format("%s · late %s · seek %s ms", q(st.drops), q(st.delayed), q(st.seek_ms)) },
         { "gpu", string.format("%s / %s MHz · %s · %s MB", q(st.gpu_mhz), q(st.gpu_max_mhz), q(st.gpu_pstate), q(st.vram_mb)) },
         { "display", string.format("%s Hz · measured %s", q(st.display_fps, "%.0f"), q(st.measured_display_fps, "%.1f")) },
+        { "shaders", st.shaders or "none" },
     }
     if st.fill then  -- wrap onto a second line when long
         local f = st.fill
