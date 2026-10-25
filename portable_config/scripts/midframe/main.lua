@@ -485,6 +485,15 @@ end
 
 -- ---------- modal overlays (one at a time): home | sheet | quick | settings ----------
 local Modal = { ov = mp.create_osd_overlay("ass-events"), kind = nil, scale = 1, canvas = nil }
+local UI_LOG = expand("~~/midframe-ui.log")
+local function ulog(...)
+    local f = io.open(UI_LOG, "a")
+    if f then f:write(os.date("%H:%M:%S "), table.concat({ ... }, " "), "\n"); f:close() end
+end
+-- uosc's bar/top bar are hidden under our panels so nothing overlaps
+local function uosc_elements(hidden)
+    mp.commandv("script-message-to", "uosc", "disable-elements", mp.get_script_name(), hidden and "timeline,controls,top_bar,volume" or "")
+end
 -- Keys an open overlay owns. Anything here never reaches mpv's own bindings while a sheet/menu/drawer is up.
 local KEYS = { "ESC", "ENTER", "KP_ENTER", "BS", "LEFT", "RIGHT", "UP", "DOWN", "TAB", "SPACE", "HOME", "END", "PGUP", "PGDWN",
     "WHEEL_UP", "WHEEL_DOWN", "WHEEL_LEFT", "WHEEL_RIGHT", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "KP_DEC",
@@ -500,11 +509,14 @@ local function modal_unbind()
     for _, k in ipairs(KEYS) do mp.remove_key_binding("mf-key-" .. k) end
 end
 local function modal_close()
-    if not Modal.kind then return end
+    if not Modal.kind then modal_unbind(); return end
     local kind = Modal.kind
+    ulog("close", kind)
     Modal.kind, Modal.build, Modal.canvas = nil, nil, nil
+    mp.set_property_native("user-data/midframe/modal", "none")
     Modal.ov:remove()
     modal_unbind()
+    uosc_elements(false)
     if kind ~= "home" then draw_home() end  -- the home screen may be underneath
     if S.debug and draw_debug then draw_debug() end
 end
@@ -519,9 +531,13 @@ modal_redraw = function()
 end
 local function modal_show(kind, build)
     if Modal.kind and Modal.kind ~= kind then modal_unbind() end
+    ulog("show", kind, "(was " .. tostring(Modal.kind) .. ")")
     Modal.kind, Modal.build = kind, build
+    mp.set_property_native("user-data/midframe/modal", kind)
+    uosc_elements(kind ~= "home")
     modal_redraw()
     mp.add_forced_key_binding("MBTN_LEFT", "mf-click", function()
+        if not Modal.kind then ulog("leaked click"); modal_unbind(); return end
         local x, y = mouse_design()
         local a = Modal.canvas and Modal.canvas:hit(x, y)
         if a and a.kind ~= "none" then handle_action(a) end
@@ -533,7 +549,12 @@ local function modal_show(kind, build)
     end)
     for _, k in ipairs(KEYS) do
         if kind ~= "home" or WHEEL[k] then  -- home swallows the wheel (no volume jumps on the start screen), nothing else
-            mp.add_forced_key_binding(k, "mf-key-" .. k, function() handle_action({ kind = "key", key = k }) end, { repeatable = true })
+            mp.add_forced_key_binding(k, "mf-key-" .. k, function()
+                if not Modal.kind then  -- leaked binding: release everything and hand the key back to mpv
+                    ulog("leaked key", k); modal_unbind(); mp.commandv("keypress", k); return
+                end
+                handle_action({ kind = "key", key = k })
+            end, { repeatable = true })
         end
     end
 end
@@ -793,6 +814,7 @@ mp.add_key_binding("ctrl+v", "paste", play_clipboard)
 -- ---------- actions from every surface ----------
 handle_action = function(a)
     local kind = Modal.kind
+    if a.kind ~= "key" then ulog("action", tostring(kind), a.kind, tostring(a.value or a.choice or a.index or a.key or "")) end
     if kind == "home" then
         if a.kind == "open" then open_file_dialog()
         elseif a.kind == "field" then type_link()
@@ -971,6 +993,7 @@ local function poll_vram()
     end)
 end
 draw_debug = draw
+mp.add_key_binding("d", "debug-lower", function() mp.commandv("script-binding", "midframe/debug") end)
 mp.add_key_binding("D", "debug", function()
     S.debug = not S.debug
     if S.debug then
