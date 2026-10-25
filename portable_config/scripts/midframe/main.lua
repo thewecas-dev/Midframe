@@ -485,7 +485,11 @@ end
 
 -- ---------- modal overlays (one at a time): home | sheet | quick | settings ----------
 local Modal = { ov = mp.create_osd_overlay("ass-events"), kind = nil, scale = 1, canvas = nil }
-local KEYS = { "ESC", "ENTER", "KP_ENTER", "BS", "LEFT", "RIGHT", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "KP_DEC" }
+-- Keys an open overlay owns. Anything here never reaches mpv's own bindings while a sheet/menu/drawer is up.
+local KEYS = { "ESC", "ENTER", "KP_ENTER", "BS", "LEFT", "RIGHT", "UP", "DOWN", "TAB", "SPACE", "HOME", "END", "PGUP", "PGDWN",
+    "WHEEL_UP", "WHEEL_DOWN", "WHEEL_LEFT", "WHEEL_RIGHT", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "KP_DEC",
+    "KP0", "KP1", "KP2", "KP3", "KP4", "KP5", "KP6", "KP7", "KP8", "KP9" }
+local WHEEL = { WHEEL_UP = true, WHEEL_DOWN = true, WHEEL_LEFT = true, WHEEL_RIGHT = true }
 local handle_action  -- forward
 local function mouse_design()
     local m = mp.get_property_native("mouse-pos") or {}
@@ -527,12 +531,31 @@ local function modal_show(kind, build)
         local a = Modal.canvas and Modal.canvas:hit(x, y)
         if a and a.kind == "recent" then handle_action({ kind = "recent_remove", index = a.index }) end
     end)
-    if kind ~= "home" then
-        for _, k in ipairs(KEYS) do
+    for _, k in ipairs(KEYS) do
+        if kind ~= "home" or WHEEL[k] then  -- home swallows the wheel (no volume jumps on the start screen), nothing else
             mp.add_forced_key_binding(k, "mf-key-" .. k, function() handle_action({ kind = "key", key = k }) end, { repeatable = true })
         end
     end
 end
+-- Rate tiles in display order (even group first), for arrow-key navigation.
+local function rate_list(a)
+    local even, other = sheet.rates(a)
+    local out = {}
+    for _, r in ipairs(even) do out[#out + 1] = r end
+    for _, r in ipairs(other) do out[#out + 1] = r end
+    return out
+end
+local function step_choice(list, dir)
+    if #list == 0 then return nil end
+    local cur = tonumber(S.choice) or (S.choice:sub(1, 1) == "x" and nil)
+    local idx
+    for i, r in ipairs(list) do
+        if r.choice == S.choice or (cur and math.abs(r.num / r.den - cur) < 0.5) then idx = i end
+    end
+    idx = idx and math.max(1, math.min(#list, idx + dir)) or (dir > 0 and 1 or #list)
+    return list[idx].choice
+end
+local function digit(k) k = k:gsub("^KP", ""); return (k == "DEC" and ".") or k end
 mp.observe_property("osd-dimensions", "native", function() modal_redraw() end)
 
 -- ---------- setup sheet ----------
@@ -799,10 +822,25 @@ handle_action = function(a)
         elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then
             sheet_finish()
         elseif a.kind == "key" then
+            local k = a.key
+            if WHEEL[k] then return end
+            if k == "TAB" then SH.custom.focus = not SH.custom.focus; return modal_redraw() end
+            if k == "LEFT" or k == "RIGHT" then
+                local c = step_choice(rate_list(sheet_args()), k == "RIGHT" and 1 or -1)
+                if c then return handle_action({ kind = "rate", choice = c }) end
+                return
+            end
+            if (k == "UP" or k == "DOWN") and SH.kind == "yt" then
+                local vals = {} for _, q in ipairs(sheet.QUALITIES) do vals[#vals + 1] = q.value end
+                local i = 1 for j, v in ipairs(vals) do if v == S.quality then i = j end end
+                i = math.max(1, math.min(#vals, i + (k == "DOWN" and 1 or -1)))
+                return handle_action({ kind = "quality", value = vals[i] })
+            end
+            if k == "SPACE" and not SH.custom.focus then return handle_action({ kind = "play" }) end
             if not SH.custom.focus then return end
-            local k = a.key == "KP_DEC" and "." or a.key
+            local d = digit(k)
             if k == "BS" then SH.custom.text = SH.custom.text:sub(1, -2)
-            elseif #k == 1 and #SH.custom.text < 6 then SH.custom.text = SH.custom.text .. k end
+            elseif #d == 1 and #SH.custom.text < 6 then SH.custom.text = SH.custom.text .. d end
             SH.custom.valid = custom_valid(SH.custom.text)
             modal_redraw()
         end
@@ -815,10 +853,19 @@ handle_action = function(a)
         elseif a.kind == "key" and (a.key == "ENTER" or a.key == "KP_ENTER") then
             if S.qcustom.valid then set_choice(S.qcustom.text, true) end
             S.qcustom = nil; modal_close()
+        elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
+            local w, h = video_size()
+            local c = step_choice(rate_list({ src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H),
+                ref = cal(REF_W, REF_H), ref_w = REF_W, ref_h = REF_H, w = w, h = h, ladder = LADDER }), a.key == "RIGHT" and 1 or -1)
+            if c then handle_action({ kind = "rate", choice = c }) end
+        elseif a.kind == "key" and a.key == "SPACE" then
+            S.qcustom = nil; modal_close(); mp.commandv("cycle", "pause")
+        elseif a.kind == "key" and a.key == "TAB" then
+            S.qcustom.focus = not S.qcustom.focus; modal_redraw()
         elseif a.kind == "key" and S.qcustom.focus then
-            local k = a.key == "KP_DEC" and "." or a.key
-            if k == "BS" then S.qcustom.text = S.qcustom.text:sub(1, -2)
-            elseif #k == 1 and #S.qcustom.text < 6 then S.qcustom.text = S.qcustom.text .. k end
+            local d = digit(a.key)
+            if a.key == "BS" then S.qcustom.text = S.qcustom.text:sub(1, -2)
+            elseif #d == 1 and #S.qcustom.text < 6 then S.qcustom.text = S.qcustom.text .. d end
             local n = fps.resolve(S.qcustom.text, S.src_num, S.src_den, cap())
             S.qcustom.valid = n ~= nil
             modal_redraw()
@@ -843,7 +890,12 @@ handle_action = function(a)
         elseif a.kind == "prepare" then start_build({ w = a.w, h = a.h }); modal_redraw()
         elseif a.kind == "config" then
             mp.command_native_async({ name = "subprocess", playback_only = false, args = { "explorer", expand("~~/") } }, function() end)
-        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then modal_close() end
+        elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then modal_close()
+        elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
+            local i = 1 for j, t in ipairs(settings.TABS) do if t[1] == TAB then i = j end end
+            TAB = settings.TABS[((i - 1 + (a.key == "RIGHT" and 1 or -1)) % #settings.TABS) + 1][1]
+            modal_redraw()
+        end
     end
 end
 
