@@ -78,6 +78,10 @@ Expand-Archive (Get-File "$gh/tomasklaen/uosc/releases/download/$UOSC_TAG/uosc.z
 Copy-Item (Get-File "$gh/yt-dlp/yt-dlp/releases/download/$YTDLP_TAG/yt-dlp.exe") "$app\yt-dlp.exe"
 Copy-Item "$PSScriptRoot\launch.ps1" "$app\launch.ps1"
 Copy-Item "$PSScriptRoot\icon.ico" "$app\icon.ico"
+# Window / taskbar icon comes from mpv.exe's own resources: stamp ours in with rcedit
+$rcedit = Get-File "$gh/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe"
+& $rcedit "$app\mpv.exe" --set-icon "$PSScriptRoot\icon.ico"
+if ($LASTEXITCODE) { throw "rcedit failed to set the mpv.exe icon" }
 
 # Installer
 & iscc "/DAppDir=$app" "/O$root\dist" "$PSScriptRoot\installer.iss"

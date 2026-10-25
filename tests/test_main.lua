@@ -120,7 +120,7 @@ local function make_env(opts)
         add_periodic_timer = function() return timer end,
         add_timeout = function(_, f) E.timers[#E.timers + 1] = f; return timer end,
         add_key_binding = function(_, n, f) E.bindings[n] = f end,
-        add_forced_key_binding = function(_, n, f) E.forced[n] = f end,
+        add_forced_key_binding = function(_, n, f, opts) E.forced[n] = (opts and opts.complex) and function() return f({ event = "down" }) end or f end,
         remove_key_binding = function(n) E.forced[n] = nil end,
         register_script_message = function(n, f) E.messages[n] = f end,
         enable_messages = function() end,
@@ -141,6 +141,13 @@ local function make_env(opts)
         end,
         format_json = json,
         parse_json = decode,
+        readdir = function(dir)
+            local p = io.popen('ls "' .. dir .. '" 2>/dev/null')
+            local out = {}
+            for line in p:lines() do out[#out + 1] = line end
+            p:close()
+            return out
+        end,
     }
     package.loaded["mp.msg"] = { info = function() end, warn = function() end, error = function() end }
     package.loaded["mp.options"] = { read_options = function() end }
@@ -244,7 +251,7 @@ E = make_env({ cal = { ["1920x1080"] = RTX4050 } })
 play(E, { w = 1280, h = 720, colormatrix = "bt.709", colorlevels = "limited" }, 23.976)
 eq(last_vf(E), nil, "no filter without an engine")
 eq(#builds(E), 1, "one on-demand build")
-eq(build_args(E, 1), ENGINES .. " 1280 720 1", "720p fits level 1 by estimate")
+eq(build_args(E, 1), ENGINES .. " 1280 720 1 2 3 4", "720p fits level 1 by estimate; every faster level is built too")
 assert(osd_has(E, "Preparing RIFE 4.26 for 1280×720"), last_osd(E))
 assert(E.set["user-data/midframe/status"]:find("preparing RIFE 4.26", 1, true), E.set["user-data/midframe/status"])
 write(ENGINES .. "/cal_1280x720.json", json({ w = 1280, h = 720, levels = { ["1"] = 90 } }))
@@ -259,7 +266,12 @@ eq(#builds(E), 1, "second build queued, not started")
 write(ENGINES .. "/cal_1280x720.json", json({ w = 1280, h = 720, levels = { ["1"] = 90 } }))
 builds(E)[1].cb(true, { status = 0 })
 eq(#builds(E), 2, "queued build starts after the first")
-assert(build_args(E, 2):find("^" .. ENGINES .. " 2560 1440 %d$"), build_args(E, 2))
+assert(build_args(E, 2):find("^" .. ENGINES .. " 2560 1440 %d"), build_args(E, 2))
+
+-- test_nearest_reference: a 2560x1350 stream is estimated from the 1440p calibration, not from 1080p scaled up
+E = make_env({ cal = { ["1920x1080"] = { 45.5, 92.8, 134.0, 145.2 }, ["2560x1440"] = { [3] = 63.9, [4] = 74.7 } } })
+play(E, { w = 2560, h = 1350, colormatrix = "bt.709", colorlevels = "limited" }, 24)
+eq(build_args(E, 1), ENGINES .. " 2560 1350 4", "1440p numbers say only quarter keeps 24->48 with headroom")
 
 -- test_quick_menu: F opens the tile menu; a tile applies; toggle turns interpolation off; Esc closes
 E = make_env({ cal = { ["1920x1080"] = FULL } })
@@ -393,6 +405,8 @@ act(E, { kind = "pick", key = "choice", value = "x2.5" })
 assert(io.open(PREFS):read("*a"):find('"choice":"x2.5"'), "picked value persists")
 act(E, { kind = "cycle", key = "audio" }); act(E, { kind = "pick", key = "audio", value = 100 })
 eq(E.set["audio-delay"], 0.1, "audio offset applied to mpv")
+act(E, { kind = "cycle", key = "yt_cookies" }); act(E, { kind = "pick", key = "yt_cookies", value = "brave" })
+eq(E.set["ytdl-raw-options"]["cookies-from-browser"], "brave", "yt-dlp reads the chosen browser's cookies")
 act(E, { kind = "key", key = "ESC" })
 assert(osd_has(E, "Drop a video here"), "back to home after settings")
 E.props["idle-active"] = false
@@ -415,6 +429,55 @@ E.observers["idle-active"]("idle-active", true)
 assert(osd_has(E, "Sinners (2025)"), "recent card on home")
 act(E, { kind = "recent", index = 1 })
 assert(E.cmds[#E.cmds]:find("^loadfile D:\\Movies\\Sinners%.mkv replace %-1 start=%d"), E.cmds[#E.cmds])
+os.remove("portable_config/midframe-recent.json")
+
+-- test_fill: z cycles modes and sets VO properties; bars detected from a raw frame are cropped only outside Fit
+E = make_env({ cal = { ["1920x1080"] = FULL } })
+E.props["osd-dimensions"] = { w = 1920, h = 1080 }
+E.props["path"] = "D:\\Movies\\wide.mkv"
+E.props["video-params"] = { w = 1920, h = 1080, dw = 1920, dh = 1080, colormatrix = "bt.709", colorlevels = "limited" }
+E.props["container-fps"] = 23.976; E.props["display-fps"] = 144
+E.events["file-loaded"]()
+E.observers["video-params"]()
+eq(E.set["video-zoom"], 0, "fit: no zoom")
+-- a raw frame with 140 px bars top and bottom
+local black, grey = string.rep(string.char(0, 0, 0, 0), 1920), string.rep(string.char(90, 90, 90, 0), 1920)
+local rows = {} for y = 0, 1079 do rows[#rows + 1] = (y < 140 or y >= 940) and black or grey end
+package.loaded["mp"].command_native = function(c)
+    if c[1] == "expand-path" then return (c[2]:gsub("^~~/", "portable_config/")) end
+    if c.name == "screenshot-raw" then return { w = 1920, h = 1080, stride = 1920 * 4, format = "bgr0", data = table.concat(rows) } end
+end
+E.timers[#E.timers]()  -- first bar sample (4 s after load)
+eq(E.set["video-crop"] or "", "", "fit mode: bars detected but not cropped")
+E.bindings["fill-cycle"]()  -- z -> fill
+eq(E.set["video-crop"], "1920x800+0+140", "fill mode crops the baked-in bars")
+assert(math.abs(2 ^ E.set["video-zoom"] - math.sqrt(1080 / 800)) < 0.01, "half the gap by zoom: " .. tostring(E.set["video-zoom"]))
+assert(math.abs(E.set["video-scale-y"] - math.sqrt(1080 / 800)) < 0.01, "half the gap by stretch")
+eq(last_vf(E) and last_vf(E):find("vapoursynth") ~= nil, true, "interpolation filter untouched by fill")
+E.bindings["fill-cycle"]()  -- zoom
+assert(math.abs(2 ^ E.set["video-zoom"] - 1080 / 800) < 0.01, "zoom covers the whole gap"); eq(E.set["video-scale-y"], 1)
+E.bindings["fill-cycle"]()  -- stretch
+eq(E.set["video-zoom"], 0); assert(math.abs(E.set["video-scale-y"] - 1080 / 800) < 0.01, "stretch covers the whole gap")
+assert(io.open("portable_config/midframe-recent.json"):read("*a"):find('"fill_mode":"stretch"'), "per-video choice remembered")
+-- forcing a picture area: 2.39:1 inside a 16:9 frame
+E.bindings["fill-menu"]()
+act(E, { kind = "crop_mode", value = 2.39 })
+eq(E.set["video-crop"], "1920x802+0+138", "manual 2.39:1 crop")
+act(E, { kind = "crop_mode", value = "none" })
+eq(E.set["video-crop"], "", "crop off")
+-- manual: type a zoom value, step stretch with the + button, arrows on the focused field
+act(E, { kind = "fill_mode", value = "manual" })
+act(E, { kind = "field", field = "zoom" }); act(E, { kind = "key", key = "1" }); act(E, { kind = "key", key = "." }); act(E, { kind = "key", key = "3" }); act(E, { kind = "key", key = "ENTER" })
+assert(math.abs(2 ^ E.set["video-zoom"] - 1.3) < 0.001, "typed zoom 1.3: " .. tostring(E.set["video-zoom"]))
+act(E, { kind = "step", field = "stretch", delta = 0.01 }); act(E, { kind = "step", field = "stretch", delta = 0.01 })
+assert(math.abs(E.set["video-scale-y"] - 1.02) < 0.001, "stretch stepped twice")
+act(E, { kind = "key", key = "LEFT" })
+assert(math.abs(E.set["video-scale-y"] - 1.01) < 0.001, "left arrow steps the focused (stretch) field down")
+assert(E.forced["mf-dblclick"], "double-click swallowed while a panel is open")
+act(E, { kind = "key", key = "ESC" })
+eq(E.forced["mf-dblclick"], nil, "released on close")
+E.events["end-file"]()
+eq(E.set["video-zoom"], 0, "reset at end of file"); eq(E.set["video-crop"], "", "crop reset")
 os.remove("portable_config/midframe-recent.json")
 
 -- test_waits_for_stream_fps: no filter until the real fps is known, then re-plans when it changes

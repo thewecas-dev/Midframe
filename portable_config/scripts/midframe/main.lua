@@ -12,6 +12,7 @@ local overlay = require "overlay"
 local sheet = require "sheet"
 local home = require "home"
 local settings = require "settings"
+local fill = require "fill"
 
 local o = {
     enabled = true,
@@ -64,6 +65,8 @@ local S = {
     enabled = o.enabled, choice = pref("choice", o.choice), quality = pref("quality", o.quality),
     ask_yt = pref("ask_yt", o.ask), ask_local = pref("ask_local", o.ask), anime = pref("anime", o.anime),
     even = pref("even", true), headroom = pref("headroom", auto.HEADROOM), audio_delay = pref("audio_delay", 0),
+    fill_mode = pref("fill_mode", "fit"), fill_balance = pref("fill_balance", 0.5),
+    yt_cookies = pref("yt_cookies", "none"),
     added = false, debug = false, builds = {}, building = nil,
     hist = { real_fps = {}, drops = {}, vram = {} },
     recents = read_json(RECENT) or {},
@@ -73,7 +76,8 @@ auto.HEADROOM = S.headroom
 
 local function save_prefs()
     write_json(PREFS, { choice = S.choice, quality = S.quality, ask_yt = S.ask_yt, ask_local = S.ask_local,
-        anime = S.anime, even = S.even, headroom = S.headroom, audio_delay = S.audio_delay })
+        anime = S.anime, even = S.even, headroom = S.headroom, audio_delay = S.audio_delay,
+        fill_mode = S.fill_mode, fill_balance = S.fill_balance, yt_cookies = S.yt_cookies })
 end
 
 local function osd_size()
@@ -127,6 +131,23 @@ local function cal(w, h)
     return out
 end
 local function cal_count(w, h) local n = 0 for _ in pairs(cal(w, h)) do n = n + 1 end return n end
+-- Reference for an unmeasured size: the calibrated size closest in pixel count (1440p numbers predict a 2560x1350
+-- stream far better than 1080p numbers scaled up). Returns levels, ref_w, ref_h.
+local function nearest_cal(w, h)
+    local best, bw, bh, bd
+    for _, name in ipairs(utils.readdir(ENGINES, "files") or {}) do
+        local cw, ch = name:match("^cal_(%d+)x(%d+)%.json$")
+        if cw then
+            cw, ch = tonumber(cw), tonumber(ch)
+            local c = cal(cw, ch)
+            local n = 0 for _ in pairs(c) do n = n + 1 end
+            local d = math.abs(math.log((cw * ch) / (w * h)))
+            if n > 0 and (not bd or d < bd - 1e-9 or (math.abs(d - bd) < 1e-9 and n > (best and #best or 0))) then best, bw, bh, bd = c, cw, ch, d end
+        end
+    end
+    if not best then return cal(REF_W, REF_H), REF_W, REF_H end
+    return best, bw, bh
+end
 local function ref_ready() return cal_count(REF_W, REF_H) >= #LADDER end
 
 local function video_size()
@@ -152,6 +173,93 @@ local function cap() return fps.cap(mp.get_property_number("display-fps")) end
 
 local function set_button(name, t) mp.commandv("script-message-to", "uosc", "set-button", name, utils.format_json(t)) end
 
+local function save_recents() write_json(RECENT, S.recents) end
+
+-- ---------- picture fill (crop baked-in bars, blend zoom + stretch); VO-only, never touches the filter chain ----------
+local FILL = { crop = nil, samples = 0, timer = nil, params = nil, file_mode = nil, file_balance = nil, crop_mode = "auto",
+    manual = { zoom = 1, stretch = 1 }, focus = "zoom", typing = nil }
+local function fill_mode() return FILL.file_mode or S.fill_mode end
+local function fill_balance() return FILL.file_balance or S.fill_balance end
+-- Effective crop: detected bars (auto), a forced aspect, or none.
+local function fill_crop()
+    local m = FILL.crop_mode
+    if m == "none" then return nil end
+    if type(m) == "number" then
+        local vp = mp.get_property_native("video-params")
+        if not (vp and vp.w) then return nil end
+        local par = (vp.dw and vp.dh and vp.h > 0) and (vp.dw / vp.dh) / (vp.w / vp.h) or 1
+        return fill.manual_crop(vp.w, vp.h, m, par)
+    end
+    return FILL.crop
+end
+local function fill_summary()
+    return fill.describe(fill_mode(), fill_balance(), FILL.params, fill_mode() ~= "fit" and fill_crop() or nil)
+end
+local function apply_fill()
+    local vp = mp.get_property_native("video-params")
+    if not (vp and vp.w and vp.h and vp.w > 0) then return end
+    local ww, wh = osd_size()
+    local mode = fill_mode()
+    local crop = mode ~= "fit" and fill_crop() or nil
+    local par = (vp.dw and vp.dh and vp.h > 0) and (vp.dw / vp.dh) / (vp.w / vp.h) or 1  -- anamorphic sources
+    local vw, vh = (crop and crop.w or vp.w) * par, crop and crop.h or vp.h
+    local p = fill.params(vw, vh, ww, wh, mode, fill_balance(), FILL.manual)
+    FILL.params = p
+    local want_crop = crop and string.format("%dx%d+%d+%d", crop.w, crop.h, crop.x, crop.y) or ""
+    mp.set_property("video-crop", want_crop)
+    mp.set_property_number("video-zoom", p.zoom)
+    mp.set_property_number("video-scale-x", p.scale_x)
+    mp.set_property_number("video-scale-y", p.scale_y)
+    mp.set_property_native("user-data/midframe/fill", fill_summary())
+end
+local function reset_fill()
+    if FILL.timer then FILL.timer:kill(); FILL.timer = nil end
+    FILL.crop, FILL.samples, FILL.params, FILL.file_mode, FILL.file_balance, FILL.crop_mode = nil, 0, nil, nil, nil, "auto"
+    FILL.manual, FILL.focus, FILL.typing = { zoom = 1, stretch = 1 }, "zoom", nil
+    mp.set_property("video-crop", ""); mp.set_property_number("video-zoom", 0)
+    mp.set_property_number("video-scale-x", 1); mp.set_property_number("video-scale-y", 1)
+end
+-- One raw frame, scanned for black bars. A few samples spread over the first minutes; the picture area only grows.
+local function sample_bars()
+    if not mp.get_property("path") or FILL.samples >= 6 then return end
+    local shot = mp.command_native({ name = "screenshot-raw", format = "bgr0" })
+    if not (shot and shot.data and shot.w and shot.w > 0) then return end
+    FILL.samples = FILL.samples + 1
+    local c = fill.detect(shot.data, shot.w, shot.h, shot.stride, 4)
+    local before = FILL.crop and (FILL.crop.w .. "x" .. FILL.crop.h) or "none"
+    -- Fades and dark scenes return nil too, so a nil sample never erases an earlier detection; a sample with
+    -- smaller bars does shrink the crop (merge keeps the larger picture area).
+    if c then FILL.crop = FILL.crop and fill.merge(FILL.crop, c) or c end
+    if FILL.samples >= 3 and not FILL.crop then FILL.crop = nil end
+    local after = FILL.crop and (FILL.crop.w .. "x" .. FILL.crop.h) or "none"
+    if before ~= after then apply_fill() end
+end
+local function schedule_bar_samples()
+    if FILL.timer then FILL.timer:kill() end
+    FILL.samples = 0
+    local delays, i = { 4, 20, 45, 90, 150, 240 }, 0
+    local function nxt()
+        i = i + 1
+        if not delays[i] then FILL.timer = nil; return end
+        FILL.timer = mp.add_timeout(delays[i] - (delays[i - 1] or 0), function() sample_bars(); nxt() end)
+    end
+    nxt()
+end
+local function set_fill(mode, balance, remember, crop_mode)
+    if mode then FILL.file_mode = mode end
+    if balance then FILL.file_balance = math.max(0, math.min(1, balance)) end
+    if crop_mode ~= nil then FILL.crop_mode = crop_mode end
+    apply_fill()
+    if remember then  -- per-video memory lives in recents
+        for _, r in ipairs(S.recents) do
+            if r.path == mp.get_property("path") then
+                r.fill_mode, r.fill_balance, r.fill_crop = FILL.file_mode, FILL.file_balance, FILL.crop_mode
+                r.fill_zoom, r.fill_stretch = FILL.manual.zoom, FILL.manual.stretch; save_recents(); break
+            end
+        end
+    end
+end
+
 -- Keep uosc's buttons and the top-bar status line in sync.
 local function sync_ui()
     local t, lv = target()
@@ -166,6 +274,7 @@ local function sync_ui()
         icon = "high_quality", tooltip = h and (h .. "p · quality and frame rate") or "Quality and frame rate",
         command = "script-binding midframe/setup",
     })
+    set_button("midframe_fill", { icon = "aspect_ratio", active = fill_mode() ~= "fit", tooltip = "Picture fill: " .. fill_summary() .. " (z)", command = "script-binding midframe/fill-menu" })
     set_button("midframe_debug", { icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding midframe/debug" })
     set_button("midframe_settings", { icon = "settings", tooltip = "Settings (Ctrl+,)", command = "script-binding midframe/settings" })
     set_button("midframe_play", { icon = mp.get_property_bool("pause") and "play_arrow" or "pause", tooltip = "Play / pause (Space)", command = "cycle pause" })
@@ -198,7 +307,7 @@ local function start_build(job)
     S.building = job
     draw_home(); modal_redraw(); sync_ui()
     local args = { expand(o.python), BUILDER, ENGINES, tostring(job.w), tostring(job.h) }
-    if job.level then args[#args + 1] = tostring(job.level) end
+    if job.level then for l = job.level, #LADDER do args[#args + 1] = tostring(l) end end  -- start level and every faster one
     mp.command_native_async({
         name = "subprocess", args = args, playback_only = false, capture_stdout = true, capture_stderr = true,
     }, function(ok, res)
@@ -268,15 +377,14 @@ retarget = function()
     local w, h = video_size()
     local start = 1
     if w then
-        start = auto.start_level(cal(w, h), cal(REF_W, REF_H), REF_W, REF_H, w, h,
-            auto.rife_per_s(tn, td, S.src_num, S.src_den), #LADDER)
+        local ref, rw, rh = nearest_cal(w, h)
+        start = auto.start_level(cal(w, h), ref, rw, rh, w, h, auto.rife_per_s(tn, td, S.src_num, S.src_den), #LADDER)
     end
     S.auto = auto.new(S.levels, mp.get_time(), start)
     apply()
 end
 
 -- ---------- recents ----------
-local function save_recents() write_json(RECENT, S.recents) end
 local function recent_upsert(path, fields)
     if not path then return end
     local r
@@ -318,20 +426,36 @@ local function try_setup()
     S.matrix = MATRIX[vp.colormatrix] or (vp.h and vp.h <= 576 and "170m" or "709")
     S.range = (vp.colorlevels == "full" or vp.colorlevels == "pc") and "full" or "limited"
     recent_upsert(mp.get_property("path"), { fps = fps.fmt(n / d) })
+    apply_fill()
     retarget()
 end
 mp.observe_property("video-params", "native", try_setup)
 mp.observe_property("container-fps", "number", try_setup)
-mp.register_event("end-file", function()
+mp.register_event("end-file", function(e)
     S.ended_at = mp.get_time()
+    reset_fill()
     remove()
+    if e and e.reason == "error" then  -- say why instead of dropping back to the home screen silently
+        local why = e.file_error or "unknown error"
+        local path = mp.get_property("playlist/0/filename") or ""
+        if is_url(path) and S.last_ytdl_error then why = S.last_ytdl_error end
+        notice("Could not play: " .. why, 10, "bad")
+        msg.error("load failed: " .. why)
+    end
     S.src_num, S.w, S.h, S.levels, S.auto = nil, nil, nil, nil, nil
     S.enabled = o.enabled  -- a failure only disables interpolation for the file it happened on
     sync_ui()
 end)
 mp.register_event("file-loaded", function()
     local path = mp.get_property("path")
+    for _, r in ipairs(S.recents) do  -- per-video fill choice, before the first frame shows
+        if r.path == path then
+            FILL.file_mode, FILL.file_balance, FILL.crop_mode = r.fill_mode, r.fill_balance, r.fill_crop or "auto"
+            FILL.manual = { zoom = r.fill_zoom or 1, stretch = r.fill_stretch or 1 }
+        end
+    end
     recent_upsert(path, { title = mp.get_property("media-title") or path, duration = mp.get_property_number("duration") })
+    schedule_bar_samples()
     mp.set_property_number("audio-delay", (S.audio_delay or 0) / 1000)
     sync_ui()
 end)
@@ -342,6 +466,9 @@ mp.register_script_message("uosc-version", function() sync_ui() end)
 mp.enable_messages("error")
 mp.register_event("log-message", function(e)
     local p, t = e.prefix or "", e.text or ""
+    if p == "ytdl_hook" and (t:find("ERROR") or t:find("Sign in") or t:find("429") or t:find("not available")) then
+        S.last_ytdl_error = (t:match("ERROR:%s*%[[^%]]*%]%s*[%w%-_]*:%s*(.-)%s*$") or t):gsub("%s+", " "):sub(1, 140)
+    end
     if S.added or (S.fail_until and mp.get_time() < S.fail_until) then
         local f = io.open(ERROR_LOG, "a")
         if f then f:write("[", p, "] ", t, t:sub(-1) == "\n" and "" or "\n"); f:close() end
@@ -454,6 +581,25 @@ mp.register_script_message("toggle", function()
     if S.enabled then set_choice("off") else set_choice(S.choice) end
 end)
 
+-- ---------- yt-dlp options: JS runtime (YouTube needs one now) + sign-in cookies from the user's browser ----------
+-- YouTube answers "Sign in to confirm you're not a bot" / 429 to anonymous players; yt-dlp can read the cookies of
+-- a browser the user is signed into. Which browser is the user's choice (Settings → Playback).
+-- Chromium browsers (Chrome/Edge/Brave) now lock their cookie store ("Failed to decrypt with DPAPI"), so the
+-- dependable path is a cookies.txt exported with a browser extension, dropped in portable_config.
+local COOKIES_FILE = expand("~~/youtube-cookies.txt")
+local YT_BROWSERS = { { label = "None", value = "none" }, { label = "cookies.txt file", value = "file" }, { label = "Firefox", value = "firefox" },
+    { label = "Brave", value = "brave" }, { label = "Chrome", value = "chrome" }, { label = "Edge", value = "edge" } }
+local function apply_ytdl_options()
+    local raw = {}
+    if S.has_node then raw["js-runtimes"] = "node" end
+    if S.yt_cookies == "file" then
+        if utils.file_info(COOKIES_FILE) then raw["cookies"] = COOKIES_FILE end
+    elseif S.yt_cookies and S.yt_cookies ~= "none" then raw["cookies-from-browser"] = S.yt_cookies end
+    mp.set_property_native("ytdl-raw-options", raw)
+end
+mp.command_native_async({ name = "subprocess", playback_only = false, capture_stdout = true, args = { "where.exe", "node" } },
+    function(ok, res) S.has_node = ok and res.status == 0; apply_ytdl_options() end)
+
 -- ---------- quality (YouTube formats are loaded as tracks: ytdl_hook-all_formats=yes) ----------
 local function video_tracks()
     local out = {}
@@ -514,7 +660,7 @@ local function mouse_design()
     return (m.x or -1) / Modal.scale, (m.y or -1) / Modal.scale
 end
 local function modal_unbind()
-    mp.remove_key_binding("mf-click"); mp.remove_key_binding("mf-rclick")
+    mp.remove_key_binding("mf-click"); mp.remove_key_binding("mf-rclick"); mp.remove_key_binding("mf-dblclick")
     for _, k in ipairs(KEYS) do mp.remove_key_binding("mf-key-" .. k) end
 end
 local function modal_close()
@@ -545,12 +691,27 @@ local function modal_show(kind, build)
     mp.set_property_native("user-data/midframe/modal", kind)
     uosc_elements(kind ~= "home")
     modal_redraw()
-    mp.add_forced_key_binding("MBTN_LEFT", "mf-click", function()
+    mp.add_forced_key_binding("MBTN_LEFT", "mf-click", function(e)
+        if e.event == "up" then  -- end of a slider drag
+            if Modal.drag then
+                local d = Modal.drag
+                Modal.drag = nil
+                if d.timer then d.timer:kill() end
+                handle_action({ kind = "balance_end", x0 = d.x0, w = d.w })
+            end
+            return
+        end
+        if e.event ~= "down" then return end
         if not Modal.kind then ulog("leaked click"); modal_unbind(); return end
         local x, y = mouse_design()
         local a = Modal.canvas and Modal.canvas:hit(x, y)
-        if a and a.kind ~= "none" then handle_action(a) end
-    end)
+        if a and a.kind == "balance" then  -- follow the pointer until the button is released
+            Modal.drag = { x0 = a.x0, w = a.w }
+            handle_action(a)
+            Modal.drag.timer = mp.add_periodic_timer(1 / 30, function() handle_action({ kind = "balance", x0 = a.x0, w = a.w, live = true }) end)
+        elseif a and a.kind ~= "none" then handle_action(a) end
+    end, { complex = true })
+    mp.add_forced_key_binding("MBTN_LEFT_DBL", "mf-dblclick", function() end)  -- never toggle fullscreen through a panel
     mp.add_forced_key_binding("MBTN_RIGHT", "mf-rclick", function()
         local x, y = mouse_design()
         local a = Modal.canvas and Modal.canvas:hit(x, y)
@@ -586,7 +747,7 @@ local function step_choice(list, dir)
     return list[idx].choice
 end
 local function digit(k) k = k:gsub("^KP", ""); return (k == "DEC" and ".") or k end
-mp.observe_property("osd-dimensions", "native", function() modal_redraw() end)
+mp.observe_property("osd-dimensions", "native", function() modal_redraw(); apply_fill() end)
 
 -- ---------- setup sheet ----------
 local SH  -- { kind, title, meta, hook, custom = {text, valid, focus}, src_num, src_den, w, h, timer }
@@ -603,8 +764,9 @@ local function sheet_dims()
 end
 local function sheet_args()
     local w, h = sheet_dims()
-    return { src_num = SH.src_num, src_den = SH.src_den, cap = cap(), exact = cal(w, h), ref = cal(REF_W, REF_H),
-        ref_w = REF_W, ref_h = REF_H, w = w, h = h, ladder = LADDER }
+    local ref, rw, rh = nearest_cal(w, h)
+    return { src_num = SH.src_num, src_den = SH.src_den, cap = cap(), exact = cal(w, h), ref = ref,
+        ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }
 end
 local function custom_valid(text)
     if not SH or text == "" then return false end
@@ -687,8 +849,9 @@ end
 -- ---------- quick menu ----------
 local function quick_model(W, H)
     local w, h = video_size()
-    local a = { src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H), ref = cal(REF_W, REF_H),
-        ref_w = REF_W, ref_h = REF_H, w = w, h = h, ladder = LADDER }
+    local ref, rw, rh = nearest_cal(w or REF_W, h or REF_H)
+    local a = { src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H), ref = ref,
+        ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }
     local even, other = sheet.rates(a)
     local t = target()
     return sheet.quick({ even = even, other = other, choice = S.choice, custom = S.qcustom, enabled = S.enabled,
@@ -709,17 +872,28 @@ local function setting_options(key)
     if key == "choice" then for _, c in ipairs(CHOICES) do out[#out + 1] = { label = label_choice(c), value = c } end
     elseif key == "quality" then for _, q in ipairs(sheet.QUALITIES) do out[#out + 1] = { label = label_quality(q.value), value = q.value } end
     elseif key == "headroom" then for _, h in ipairs(HEADROOMS) do out[#out + 1] = { label = string.format("%.1f×", h) .. (h == 1.5 and " (recommended)" or h == 1.2 and " (tight)" or " (safe)"), value = h } end
-    elseif key == "audio" then for _, a in ipairs(AUDIO_OFFSETS) do out[#out + 1] = { label = (a > 0 and "+" or "") .. a .. " ms", value = a } end end
+    elseif key == "audio" then for _, a in ipairs(AUDIO_OFFSETS) do out[#out + 1] = { label = (a > 0 and "+" or "") .. a .. " ms", value = a } end
+    elseif key == "fill_mode" then for _, m in ipairs(fill.MODES) do out[#out + 1] = { label = fill.LABELS[m], value = m } end
+    elseif key == "fill_balance" then for _, b in ipairs({ 0, 0.25, 0.5, 0.75, 1 }) do out[#out + 1] = { label = string.format("%d%% zoom · %d%% stretch", b * 100, 100 - b * 100), value = b } end
+    elseif key == "yt_cookies" then for _, b in ipairs(YT_BROWSERS) do out[#out + 1] = b end end
     return out
 end
 local function setting_value(key)
-    return ({ choice = S.choice, quality = S.quality, headroom = S.headroom, audio = S.audio_delay or 0 })[key]
+    return ({ choice = S.choice, quality = S.quality, headroom = S.headroom, audio = S.audio_delay or 0, fill_mode = S.fill_mode, fill_balance = S.fill_balance, yt_cookies = S.yt_cookies })[key]
 end
 local function set_setting(key, value)
     if key == "choice" then S.choice = value; if S.src_num then retarget() end
     elseif key == "quality" then S.quality = value
     elseif key == "headroom" then S.headroom = value; auto.HEADROOM = value
-    elseif key == "audio" then S.audio_delay = value; mp.set_property_number("audio-delay", value / 1000) end
+    elseif key == "audio" then S.audio_delay = value; mp.set_property_number("audio-delay", value / 1000)
+    elseif key == "fill_mode" then S.fill_mode = value; apply_fill(); sync_ui()
+    elseif key == "fill_balance" then S.fill_balance = value; apply_fill(); sync_ui()
+    elseif key == "yt_cookies" then
+        S.yt_cookies = value; apply_ytdl_options()
+        if value == "file" and not utils.file_info(COOKIES_FILE) then
+            notice("Put a cookies.txt export of youtube.com at portable_config\\youtube-cookies.txt (see Settings)", 8, "warn")
+        end
+    end
     save_prefs()
 end
 local function engines_model()
@@ -754,10 +928,12 @@ local function settings_model(W, H)
         dropdown = S.dropdown and { key = S.dropdown, options = setting_options(S.dropdown), selected = setting_value(S.dropdown) } or nil,
         playback = { ask_yt = S.ask_yt, ask_local = S.ask_local, rate_label = label_choice(S.choice), quality_label = label_quality(S.quality),
             anime = S.anime, even = S.even, headroom_label = string.format("%.1f×", S.headroom) .. (S.headroom == 1.5 and " (recommended)" or ""),
-            audio_label = string.format("%d ms", S.audio_delay or 0) },
+            audio_label = string.format("%d ms", S.audio_delay or 0),
+            fill_label = fill.LABELS[S.fill_mode], balance_label = string.format("%d%% zoom · %d%% stretch", S.fill_balance * 100, 100 - S.fill_balance * 100),
+            cookies_label = (function() for _, b in ipairs(YT_BROWSERS) do if b.value == S.yt_cookies then return b.label end end return "None" end)() },
         engines = engines_model(), checks = checks_model(),
         keys = { { "Ctrl+O", "Open a file" }, { "Ctrl+V", "Play the link in the clipboard" }, { "F", "Frame-rate menu" },
-            { "D", "Debug overlay" }, { "Ctrl+,", "Settings" }, { "Space", "Play / pause" }, { "← →", "Seek 5 s" }, { "F11", "Fullscreen (or double-click)" },
+            { "z", "Picture fill: Fit / Fill / Zoom / Stretch" }, { "d", "Debug overlay" }, { "Ctrl+,", "Settings" }, { "Space", "Play / pause" }, { "← →", "Seek 5 s" }, { "F11", "Fullscreen (or double-click)" },
             { "Ctrl+− / Ctrl++", "Audio offset ±100 ms" } },
         version = "Midframe " .. VERSION .. " · TensorRT",
     })
@@ -903,8 +1079,9 @@ handle_action = function(a)
             S.qcustom = nil; modal_close()
         elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
             local w, h = video_size()
+            local ref, rw, rh = nearest_cal(w or REF_W, h or REF_H)
             local c = step_choice(rate_list({ src_num = S.src_num, src_den = S.src_den, cap = cap(), exact = cal(w or REF_W, h or REF_H),
-                ref = cal(REF_W, REF_H), ref_w = REF_W, ref_h = REF_H, w = w, h = h, ladder = LADDER }), a.key == "RIGHT" and 1 or -1)
+                ref = ref, ref_w = rw, ref_h = rh, w = w, h = h, ladder = LADDER }), a.key == "RIGHT" and 1 or -1)
             if c then handle_action({ kind = "rate", choice = c }) end
         elseif a.kind == "key" and a.key == "SPACE" then
             S.qcustom = nil; modal_close(); mp.commandv("cycle", "pause")
@@ -918,6 +1095,39 @@ handle_action = function(a)
             S.qcustom.valid = n ~= nil
             modal_redraw()
         end
+    elseif kind == "fillmenu" then
+        if a.kind == "fill_mode" then set_fill(a.value, nil, true); sync_ui(); modal_redraw()
+        elseif a.kind == "crop_mode" then set_fill(nil, nil, true, a.value); sync_ui(); modal_redraw()
+        elseif a.kind == "balance" then  -- live preview while dragging; remembered on release
+            local x = mouse_design()
+            set_fill("fill", (x - a.x0) / a.w, false); modal_redraw()
+        elseif a.kind == "balance_end" then
+            set_fill("fill", nil, true); sync_ui(); modal_redraw()
+        elseif a.kind == "step" or a.kind == "field" or (a.kind == "key" and fill_mode() == "manual" and
+            (a.key == "UP" or a.key == "DOWN" or a.key == "TAB" or a.key == "BS" or WHEEL[a.key] or a.key:match("^%d$") or a.key:match("^KP%d$") or a.key == "." or a.key == "KP_DEC" or a.key == "ENTER" or a.key == "KP_ENTER")) then
+            local function commit()
+                if FILL.typing then
+                    local v = tonumber(FILL.typing)
+                    if v then FILL.manual[FILL.focus] = math.max(fill.MANUAL_MIN, math.min(fill.MANUAL_MAX, v)) end
+                    FILL.typing = nil
+                end
+            end
+            if a.kind == "field" then commit(); FILL.focus = a.field; FILL.typing = ""
+            elseif a.kind == "step" then commit(); FILL.focus = a.field; FILL.manual[a.field] = math.max(fill.MANUAL_MIN, math.min(fill.MANUAL_MAX, FILL.manual[a.field] + a.delta))
+            elseif a.key == "UP" or a.key == "DOWN" or a.key == "TAB" then commit(); FILL.focus = FILL.focus == "zoom" and "stretch" or "zoom"
+            elseif WHEEL[a.key] then commit(); local d = (a.key == "WHEEL_UP" or a.key == "WHEEL_RIGHT") and 0.01 or -0.01
+                FILL.manual[FILL.focus] = math.max(fill.MANUAL_MIN, math.min(fill.MANUAL_MAX, FILL.manual[FILL.focus] + d))
+            elseif a.key == "ENTER" or a.key == "KP_ENTER" then commit()
+            elseif a.key == "BS" then FILL.typing = (FILL.typing or ""):sub(1, -2)
+            else local d = digit(a.key); FILL.typing = ((FILL.typing or "") .. d):sub(1, 5) end
+            set_fill("manual", nil, true); sync_ui(); modal_redraw()
+        elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") and fill_mode() == "manual" then
+            if FILL.typing then local v = tonumber(FILL.typing); if v then FILL.manual[FILL.focus] = v end; FILL.typing = nil end
+            FILL.manual[FILL.focus] = math.max(fill.MANUAL_MIN, math.min(fill.MANUAL_MAX, FILL.manual[FILL.focus] + (a.key == "RIGHT" and 0.01 or -0.01)))
+            set_fill("manual", nil, true); sync_ui(); modal_redraw()
+        elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
+            set_fill(fill_mode() == "fill" and nil or "fill", fill_balance() + (a.key == "RIGHT" and 0.05 or -0.05), true); sync_ui(); modal_redraw()
+        elseif a.kind == "close" or (a.kind == "key" and (a.key == "ESC" or a.key == "ENTER" or a.key == "KP_ENTER")) then modal_close() end
     elseif kind == "settings" then
         if a.kind == "tab" then TAB = a.value; S.settings_scroll = 0; S.dropdown = nil; modal_redraw()
         elseif a.kind == "key" and (a.key == "WHEEL_UP" or a.key == "WHEEL_DOWN" or a.key == "UP" or a.key == "DOWN" or a.key == "PGUP" or a.key == "PGDWN") then
@@ -969,6 +1179,24 @@ end)
 -- Scriptable UI actions (tests, automation): script-message-to midframe action '{"kind":"rate","choice":"x2"}'
 mp.register_script_message("action", function(json) local a = utils.parse_json(json); if type(a) == "table" then handle_action(a) end end)
 
+local function fill_menu_model(W, H)
+    return sheet.fill_menu({ mode = fill_mode(), balance = fill_balance(), summary = fill_summary(), crop_mode = FILL.crop_mode,
+        manual = FILL.manual, focus = FILL.focus, typing = FILL.typing,
+        detected = FILL.crop and (FILL.crop.w .. "×" .. FILL.crop.h) or nil,
+        bars = FILL.params and FILL.params.bars or "none", W = W, H = H, bottom = H - bar_height() })
+end
+mp.add_key_binding(nil, "fill-menu", function()
+    if Modal.kind == "fillmenu" then return modal_close() end
+    if not mp.get_property("path") then return notice("Open a video first", 2, "info") end
+    modal_show("fillmenu", fill_menu_model)
+end)
+mp.add_key_binding("z", "fill-cycle", function()
+    if not mp.get_property("path") then return end
+    local i = 1 for j, m in ipairs(fill.MODES) do if m == fill_mode() then i = j end end
+    set_fill(fill.MODES[i % #fill.MODES + 1], nil, true)
+    sync_ui(); modal_redraw()
+    notice("Picture: " .. fill_summary(), 2.5, "info")
+end)
 mp.add_key_binding("f", "fps-menu-lower", function() mp.commandv("script-binding", "midframe/fps-menu") end)
 mp.add_key_binding("F", "fps-menu", function()
     if Modal.kind == "quick" then return modal_close() end
@@ -1021,7 +1249,7 @@ local function draw()
         drops = mp.get_property_number("frame-drop-count"),
         delayed = mp.get_property_number("vo-delayed-frame-count"),
         vram_mb = S.vram_mb, gpu_mhz = S.gpu_mhz, gpu_max_mhz = S.gpu_max_mhz, gpu_pstate = S.gpu_pstate,
-        seek_ms = S.seek_ms, hist = S.hist,
+        seek_ms = S.seek_ms, hist = S.hist, fill = fill_summary(),
     })
     ov:update()
 end
@@ -1073,6 +1301,30 @@ local function probe_system()
         draw_home()
     end)
 end
+
+-- Started directly (taskbar pin, "Open with", a shortcut to mpv.exe) instead of through launch.ps1? Then the
+-- VapourSynth environment is missing and every filter add would fail. Re-run through the launcher once.
+local function relaunch_via_launcher()
+    ulog("start env", "VSSCRIPT_PATH=" .. tostring(os.getenv("VSSCRIPT_PATH")), "NO_RELAUNCH=" .. tostring(os.getenv("MIDFRAME_NO_RELAUNCH")))
+    if os.getenv("VSSCRIPT_PATH") or os.getenv("MIDFRAME_NO_RELAUNCH") then return false end
+    local launcher = expand("~~exe_dir/launch.ps1")   -- (~~exe_dir/ alone expands without the trailing slash)
+    local vs = utils.file_info(expand("~~exe_dir/vs-runtime"))
+    ulog("direct start check", "launcher=" .. launcher, "found=" .. tostring(utils.file_info(launcher) ~= nil), "vs=" .. tostring(vs and vs.is_dir))
+    if not (utils.file_info(launcher) and vs and vs.is_dir) then return false end  -- not an installed Midframe: leave it
+    local args = { "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", launcher }
+    for _, item in ipairs(mp.get_property_native("playlist") or {}) do args[#args + 1] = item.filename end
+    msg.warn("started without the VapourSynth environment; relaunching through launch.ps1")
+    mp.command_native({ name = "subprocess", args = args, detach = true, playback_only = false })
+    mp.command("quit")
+    return true
+end
+if relaunch_via_launcher() then return end
+
+-- "Auto" quality = the best stream up to the screen's own height (a 1350p/1440p stream on a 1080p panel costs
+-- GPU for nothing). Falls back to 1440p when the display size is unknown.
+mp.observe_property("display-height", "number", function(_, h)
+    if h and h >= 720 then sheet.AUTO_MAX_HEIGHT = math.floor(h) end
+end)
 
 -- First launch: build + measure every level at the reference size before any video needs it.
 ensure_ref()

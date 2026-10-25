@@ -9,9 +9,8 @@ function M.render(m)
     local c = ui.canvas(W, H)
     c:rect(0, 0, W, H, 0, C.bg)
     -- top bar
-    c:rect(24, 14, 26, 26, 7, C.accent)
-    ui.icon(c, "play", 24 + 1, 14 + 1, 24, C.white)
-    c:text(60, 27, 4, 15, C.text, "Midframe", { bold = true })
+    ui.mark(c, 24, 13, 28)
+    c:text(62, 27, 4, 15, C.text, "Midframe", { bold = true })
     local gx = W - 16 - 34
     ui.icon(c, "gear", gx + 8, 18, 18, C.muted)
     c:box(gx, 10, 34, 34, { kind = "settings" })

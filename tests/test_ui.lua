@@ -96,7 +96,13 @@ local sc = settings.render({ W = 1440, H = 900, tab = "playback", ladder = LADDE
     version = "Midframe 0.2.0" })
 local sk = {}
 for _, b in ipairs(sc.boxes) do sk[b[5].kind] = (sk[b[5].kind] or 0) + 1 end
-eq(sk.toggle, 4, "four toggles"); eq(sk.cycle, 4, "four selects"); eq(sk.tab, 4); assert(sk.close >= 1)
+eq(sk.toggle, 4, "four toggles"); eq(sk.tab, 4); assert(sk.close >= 1)
+assert(sk.cycle == 6 and sc.scroll_max > 0, "last select is below the fold at 900 px, drawer scrolls")
+sc = settings.render({ W = 1440, H = 1200, tab = "playback", ladder = LADDER,
+    playback = { ask_yt = true, ask_local = true, rate_label = "2× source", quality_label = "Auto · up to 1440p", anime = true, even = true, headroom_label = "1.5× (recommended)", audio_label = "0 ms" } })
+sk = {}
+for _, b in ipairs(sc.boxes) do sk[b[5].kind] = (sk[b[5].kind] or 0) + 1 end
+eq(sk.cycle, 7, "seven selects when everything fits")
 sc = settings.render({ W = 1440, H = 900, tab = "engines", ladder = LADDER,
     engines = { { name = "1080p", dim = "1920×1080", w = 1920, h = 1080, state = "ready", vals = { 45, 93, 134, 145 } },
         { name = "4K", dim = "3840×2160", w = 3840, h = 2160, state = "none" } } })

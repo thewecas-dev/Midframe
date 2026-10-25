@@ -43,6 +43,13 @@ function M.render(st)
         { "gpu", string.format("%s / %s MHz · %s · %s MB", q(st.gpu_mhz), q(st.gpu_max_mhz), q(st.gpu_pstate), q(st.vram_mb)) },
         { "display", string.format("%s Hz · measured %s", q(st.display_fps, "%.0f"), q(st.measured_display_fps, "%.1f")) },
     }
+    if st.fill then  -- wrap onto a second line when long
+        local f = st.fill
+        if ui.textw(f, 12) > PW - 124 then
+            local cut = f:find(" · ", math.floor(#f / 2)) or f:find(" · ", 1, true)
+            if cut then rows[#rows + 1] = { "picture", f:sub(1, cut - 1) }; rows[#rows + 1] = { "", f:sub(cut + 3) } else rows[#rows + 1] = { "picture", f } end
+        else rows[#rows + 1] = { "picture", f } end
+    end
     local low_clock = st.gpu_mhz and st.gpu_max_mhz and st.gpu_mhz < st.gpu_max_mhz * 0.5
     local out = st.target_fps or st.src_fps
     local off = st.display_fps and st.measured_display_fps and math.abs(st.display_fps - st.measured_display_fps) > 2

@@ -272,4 +272,85 @@ function M.quick(m)
     return c
 end
 
+-- Fill-mode popover (bar button / z key): mode tiles + zoom/stretch balance slider.
+-- m = { mode, balance (0..1), summary, bars ("none"|...), W, H, bottom }
+function M.fill_menu(m)
+    local W, H = m.W or ui.W, m.H or ui.H
+    local c = ui.canvas(W, H)
+    local pw, pad = 380, 14
+    local manual = m.mode == "manual"
+    local h = 14 + 20 + 10 + 56 + 14 + 18 + (manual and 40 or 28) + 10 + 18 + 36 + 10 + 18 + 14
+    local px, py = W - 28 - pw, (m.bottom or (H - 84)) - h - 6
+    c:box(0, 0, W, H, { kind = "close" })
+    c:shadow(px, py, pw, h, 14, 14)
+    c:rect(px, py, pw, h, 14, C.surface, 0, C.border_strong, 1)
+    c:box(px, py, pw, h, { kind = "none" })
+    local x, y = px + pad, py + pad
+    c:text(x, y + 10, 4, 13, C.text, "Picture fill", { bold = true })
+    c:text(px + pw - pad, y + 10, 6, 11, C.muted, m.bars == "none" and "no bars on this screen" or (m.bars == "top-bottom" and "bars top and bottom" or "bars left and right"))
+    y = y + 20 + 10
+    local cw = pw - 2 * pad
+    local tw, gap = (cw - 4 * 6) / 5, 6
+    local hints = { fit = "as encoded", fill = "zoom + stretch", zoom = "crop to fill", stretch = "distort to fill", manual = "your values" }
+    local fillmod = require "fill"
+    for i, mode in ipairs(fillmod.MODES) do
+        local tx = x + (i - 1) * (tw + gap)
+        ui.tile(c, tx, y, tw, 56, fillmod.LABELS[mode], hints[mode], m.mode == mode and "selected" or "default")
+        c:box(tx, y, tw, 56, { kind = "fill_mode", value = mode })
+    end
+    y = y + 56 + 14
+    if manual then
+        -- two steppers: [−] value [+], value clickable to type; arrows/wheel adjust the focused one
+        local function stepper(sx, field, label, value, focused, typing)
+            local w2 = (cw - 12) / 2
+            c:text(sx, y + 7, 4, 11, C.muted, label)
+            local by = y + 18
+            c:rect(sx, by, 32, 32, 8, C.raised, 0, C.border, 1); c:text(sx + 16, by + 16, 5, 16, C.text, "−")
+            c:box(sx, by, 32, 32, { kind = "step", field = field, delta = -0.01 })
+            c:rect(sx + 38, by, w2 - 76, 32, 8, focused and C.accent_soft or C.raised, 0, focused and C.accent or C.border, 1)
+            local txt = typing ~= nil and (typing .. "|") or string.format("%.2f×", value)
+            c:text(sx + 38 + (w2 - 76) / 2, by + 16, 5, 14, focused and C.accent_text or C.text, txt, { bold = true })
+            c:box(sx + 38, by, w2 - 76, 32, { kind = "field", field = field })
+            c:rect(sx + w2 - 32, by, 32, 32, 8, C.raised, 0, C.border, 1); c:text(sx + w2 - 16, by + 16, 5, 16, C.text, "+")
+            c:box(sx + w2 - 32, by, 32, 32, { kind = "step", field = field, delta = 0.01 })
+        end
+        local mv = m.manual or { zoom = 1, stretch = 1 }
+        stepper(x, "zoom", "Zoom", mv.zoom, m.focus == "zoom", m.focus == "zoom" and m.typing or nil)
+        stepper(x + cw / 2 + 6, "stretch", "Stretch " .. (m.bars == "left-right" and "(width)" or "(height)"), mv.stretch, m.focus == "stretch", m.focus == "stretch" and m.typing or nil)
+        y = y + 18 + 40 + 10 + 18
+    else
+        local dim = m.mode ~= "fill"
+        c:text(x, y + 7, 4, 11, dim and C.faint or C.muted, "Balance")
+        c:text(px + pw - pad, y + 7, 6, 11, dim and C.faint or C.text, string.format("%d%% zoom · %d%% stretch", math.floor(m.balance * 100 + 0.5), 100 - math.floor(m.balance * 100 + 0.5)))
+        y = y + 18
+        -- slider: left = stretch, right = zoom
+        local sx, sw = x + 4, cw - 8
+        c:rect(sx, y + 12, sw, 4, 2, dim and C.border or C.border_strong)
+        c:rect(sx, y + 12, sw * m.balance, 4, 2, dim and C.border or C.accent)
+        c:circle(sx + sw * m.balance, y + 14, 8, dim and C.border_strong or C.white)
+        c:box(sx - 8, y, sw + 16, 28, { kind = "balance", x0 = sx, w = sw })
+        c:text(sx, y + 36, 4, 10, C.faint, "stretch")
+        c:text(sx + sw, y + 36, 6, 10, C.faint, "zoom")
+        y = y + 28 + 10 + 18
+    end
+    -- picture area: auto-detected bars or a forced aspect
+    c:text(x, y + 7, 4, 11, C.muted, "Picture area")
+    c:text(px + pw - pad, y + 7, 6, 11, C.faint, m.detected and ("found " .. m.detected) or "no bars found yet")
+    y = y + 18
+    local chips = { { label = "Auto", value = "auto" } }
+    for _, a in ipairs(fillmod.ASPECTS) do chips[#chips + 1] = { label = a.label, value = a.value } end
+    chips[#chips + 1] = { label = "Off", value = "none" }
+    local chw = (cw - (#chips - 1) * 6) / #chips
+    for i, ch in ipairs(chips) do
+        local cx = x + (i - 1) * (chw + 6)
+        local sel = m.crop_mode == ch.value or (type(ch.value) == "number" and type(m.crop_mode) == "number" and math.abs(m.crop_mode - ch.value) < 0.01)
+        c:rect(cx, y, chw, 30, 8, sel and C.accent_soft or C.raised, 0, sel and C.accent or C.border, 1)
+        c:text(cx + chw / 2, y + 15, 5, 12, sel and C.accent_text or C.text, ch.label, { bold = sel })
+        c:box(cx, y, chw, 30, { kind = "crop_mode", value = ch.value })
+    end
+    y = y + 36 + 10
+    c:text(x, y + 2, 4, 11, C.muted, ui.fit(m.summary or "", 11, cw))
+    return c
+end
+
 return M

@@ -91,6 +91,7 @@ Enter plays, Esc keeps the defaults, **Custom** takes a typed value, and "Don't 
 | **Ctrl+V** | Play the link or file path on the clipboard |
 | **f** | Frame-rate quick menu (same tiles, plus custom and the interpolation toggle) |
 | **Ctrl+,** | Settings: ask/don't ask, defaults, anime mode, headroom, audio offset, engines per resolution, system check |
+| **z** | Picture fill: Fit → Fill → Zoom → Stretch → Manual (bar button opens the full panel) |
 | **d** | Debug overlay |
 | **F11** or double-click | Fullscreen |
 | **Shift+I** | mpv's own stats page |
@@ -105,6 +106,29 @@ debug, settings and fullscreen.
 minutes while the engine builds, then interpolation switches on by itself. Settings → Engines can build them ahead of time.
 
 **Anime** is handled faithfully by default (Settings → Faithful anime mode).
+
+**Black bars.** The picture-fill panel (bar button or `z`) removes them without touching interpolation, because it
+only changes how mpv displays the finished frames. Baked-in letterbox bars are detected from the picture itself
+(or forced with the 2.39:1 / 2.0:1 / 1.85:1 / 16:9 chips when detection can't see dark-grey streamed bars), and the
+remaining mismatch with your screen is closed by **Fill**, which splits the difference between zooming in and
+stretching so neither is extreme; a slider sets the balance. **Zoom**, **Stretch** and **Manual** (typed or stepped
+zoom and stretch values) are there too. Choices are remembered per video; Settings → Playback → Picture sets the default.
+
+**YouTube asks you to sign in.** If a link fails with "Sign in to confirm you're not a bot" (YouTube rate-limits
+anonymous players), give yt-dlp your own YouTube login once:
+
+1. In your browser, install the **Get cookies.txt LOCALLY** extension.
+2. Open youtube.com while signed in, click the extension and export the cookies for the current site.
+3. Save the file as `portable_config\youtube-cookies.txt` inside the install folder.
+4. In Midframe: Settings → Playback → **YouTube sign-in → cookies.txt file**.
+
+The file is your YouTube login, so don't share it; re-export when links start failing again (cookies expire).
+Firefox users can pick "Firefox" instead and skip the export. Chrome, Edge and Brave encrypt their cookie store,
+which is why those options usually fail with "Failed to decrypt with DPAPI". Midframe also uses Node.js as the
+JavaScript runtime for yt-dlp when it is installed, which YouTube now needs for the full list of formats.
+
+**Starting it.** Use the Start-menu shortcut or pin the running window; both work. A direct start of `mpv.exe`
+re-launches itself through `launch.ps1` so the RIFE engines are always found.
 
 ## How it picks a level
 

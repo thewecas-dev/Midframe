@@ -21,6 +21,8 @@ if ($vsscript) {
 $state = "$app\portable_config\midframe-last.json"
 # Load CUDA kernels on first use: faster TensorRT engine load after every seek (the filter reloads).
 $env:CUDA_MODULE_LOADING = "LAZY"
+# Tells main.lua it was started the right way (it relaunches through this script otherwise)
+$env:MIDFRAME_NO_RELAUNCH = "1"
 
 # YouTube changes often: update yt-dlp in the background once a week.
 $stamp = "$app\yt-dlp.updated"

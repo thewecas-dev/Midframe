@@ -93,7 +93,9 @@ function M.render(m)
         h = row(c, x, w, y, "Default frame rate", "Pre-selected in the sheet and used when not asking")
         select_box(c, x + w, y, p.rate_label, { kind = "cycle", key = "choice" }, true, m.dropdown and m.dropdown.key == "choice"); y = y + h + 6
         h = row(c, x, w, y, "Default YouTube quality", "")
-        select_box(c, x + w, y, p.quality_label, { kind = "cycle", key = "quality" }, true, m.dropdown and m.dropdown.key == "quality"); y = y + h + 14
+        select_box(c, x + w, y, p.quality_label, { kind = "cycle", key = "quality" }, true, m.dropdown and m.dropdown.key == "quality"); y = y + h + 6
+        h = row(c, x, w, y, "YouTube sign-in", "cookies.txt: export youtube.com cookies with the \"Get cookies.txt LOCALLY\" extension to portable_config\\youtube-cookies.txt")
+        select_box(c, x + w, y, p.cookies_label or "None", { kind = "cycle", key = "yt_cookies" }, true, m.dropdown and m.dropdown.key == "yt_cookies"); y = y + h + 14
         group("INTERPOLATION")
         h = row(c, x, w, y, "Faithful anime mode", "Keeps held drawings held and never blends across a cut")
         ui.toggle(c, x + w - 40, y + 4, p.anime); c:box(x, y, w, h, { kind = "toggle", key = "anime" }); y = y + h + 6
@@ -101,6 +103,11 @@ function M.render(m)
         ui.toggle(c, x + w - 40, y + 4, p.even); c:box(x, y, w, h, { kind = "toggle", key = "even" }); y = y + h + 6
         h = row(c, x, w, y, "Headroom", "How much faster than needed an engine must measure")
         select_box(c, x + w, y, p.headroom_label, { kind = "cycle", key = "headroom" }, true, m.dropdown and m.dropdown.key == "headroom"); y = y + h + 14
+        group("PICTURE")
+        h = row(c, x, w, y, "Fill mode for new videos", "Fit shows the file as encoded; Fill blends zoom and stretch to remove black bars")
+        select_box(c, x + w, y, p.fill_label or "Fit", { kind = "cycle", key = "fill_mode" }, true, m.dropdown and m.dropdown.key == "fill_mode"); y = y + h + 6
+        h = row(c, x, w, y, "Zoom / stretch balance", "How Fill splits the difference. Press z or use the bar button per video")
+        select_box(c, x + w, y, p.balance_label or "50% zoom · 50% stretch", { kind = "cycle", key = "fill_balance" }, true, m.dropdown and m.dropdown.key == "fill_balance"); y = y + h + 14
         group("AUDIO")
         h = row(c, x, w, y, "Audio offset", "Positive delays audio. Ctrl+− / Ctrl++ during playback")
         select_box(c, x + w, y, p.audio_label, { kind = "cycle", key = "audio" }, true, m.dropdown and m.dropdown.key == "audio"); y = y + h

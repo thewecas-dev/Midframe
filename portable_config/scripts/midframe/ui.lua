@@ -195,6 +195,21 @@ local ICONS = {
     check = "m 5 12 l 7 10 l 10 13 l 17 6 l 19 8 l 10 17",
     chevron = "m 8 10 l 9 9 l 12 12 l 15 9 l 16 10 l 12 14",
 }
+-- The app icon (packaging/icon.png) as vectors: dark tile, two fading play marks, one solid. `s` = tile size.
+C.tile = "&H3A2027&"
+function M.mark(c, x, y, s)
+    c:rect(x, y, s, s, s * 0.22, C.tile)
+    c:circle(x + s * 0.54, y + s * 0.5, s * 0.30, C.accent, 0xA8)  -- soft glow
+    local function tri(cx, cy, size, fill, alpha)
+        local hh = size * 0.95 / 2
+        c:shape(string.format("m %s %s l %s %s l %s %s", M.num(cx - size * 0.42), M.num(cy - hh), M.num(cx - size * 0.42), M.num(cy + hh), M.num(cx + size * 0.58), M.num(cy)), fill, alpha)
+    end
+    local cx, cy, size = x + s * 0.56, y + s * 0.5, s * 0.44
+    tri(cx - size * 0.34, cy, size, C.accent, 0xB0)
+    tri(cx - size * 0.17, cy, size, C.accent, 0x60)
+    tri(cx, cy, size, C.white, 0)
+end
+
 function M.icon(c, name, x, y, s, color)
     local p = ICONS[name]
     if not p then return end
