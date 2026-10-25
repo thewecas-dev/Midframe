@@ -950,7 +950,9 @@ handle_action = function(a)
             S.dropdown = nil; modal_redraw()
         elseif a.kind == "prepare" then start_build({ w = a.w, h = a.h }); modal_redraw()
         elseif a.kind == "config" then
-            mp.command_native_async({ name = "subprocess", playback_only = false, args = { "explorer", expand("~~/") } }, function() end)
+            -- Explorer wants backslashes and no trailing separator, or it opens Documents instead
+            local dir = expand("~~/"):gsub("/", "\\"):gsub("\\+$", "")
+            mp.command_native_async({ name = "subprocess", playback_only = false, args = { "explorer", dir } }, function() end)
         elseif a.kind == "close" or (a.kind == "key" and a.key == "ESC") then S.dropdown = nil; modal_close()
         elseif a.kind == "key" and (a.key == "LEFT" or a.key == "RIGHT") then
             local i = 1 for j, t in ipairs(settings.TABS) do if t[1] == TAB then i = j end end
