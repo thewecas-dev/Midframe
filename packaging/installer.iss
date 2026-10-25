@@ -19,7 +19,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2/fast
 ; The TensorRT runtime is several GB, beyond a single setup file's limit.
 DiskSpanning=yes
-DiskSliceSize=max
+; GitHub release assets must stay under 2 GiB each
+DiskSliceSize=1900000000
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"

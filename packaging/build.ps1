@@ -10,7 +10,7 @@ $MPV_ASSET = "mpv-x86_64-v3-20261021-git-e471496c56.7z"
 $VS_VER    = "R79"  # R80+ dropped API3, which vs-mlrt's vstrt.dll still uses
 $MLRT_TAG  = "v15.16"
 $UOSC_TAG  = "5.13.0"
-$YTDLP_TAG = "2026.08.19"
+$YTDLP_TAG = "2026.10.21"
 # Must match portable_config\vs\ladder.json. rife_v2/ is the faster "v2" network used for RIFE 4.26.
 $RIFE_MODELS = @("rife/rife_v4.26.onnx", "rife_v2/rife_v4.26.onnx", "rife/rife_v4.6.onnx")
 
