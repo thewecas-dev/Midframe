@@ -728,7 +728,7 @@ local function settings_model(W, H)
             audio_label = string.format("%d ms", S.audio_delay or 0) },
         engines = engines_model(), checks = checks_model(),
         keys = { { "Ctrl+O", "Open a file" }, { "Ctrl+V", "Play the link in the clipboard" }, { "F", "Frame-rate menu" },
-            { "D", "Debug overlay" }, { "Ctrl+,", "Settings" }, { "Space", "Play / pause" }, { "← →", "Seek 5 s" }, { "f", "Fullscreen" },
+            { "D", "Debug overlay" }, { "Ctrl+,", "Settings" }, { "Space", "Play / pause" }, { "← →", "Seek 5 s" }, { "F11", "Fullscreen (or double-click)" },
             { "Ctrl+− / Ctrl++", "Audio offset ±100 ms" } },
         version = "Midframe " .. VERSION .. " · TensorRT",
     })
@@ -928,6 +928,7 @@ end)
 -- Scriptable UI actions (tests, automation): script-message-to midframe action '{"kind":"rate","choice":"x2"}'
 mp.register_script_message("action", function(json) local a = utils.parse_json(json); if type(a) == "table" then handle_action(a) end end)
 
+mp.add_key_binding("f", "fps-menu-lower", function() mp.commandv("script-binding", "midframe/fps-menu") end)
 mp.add_key_binding("F", "fps-menu", function()
     if Modal.kind == "quick" then return modal_close() end
     if not S.src_num then return notice("Open a video first", 2, "info") end

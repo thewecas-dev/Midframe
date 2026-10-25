@@ -89,9 +89,10 @@ Enter plays, Esc keeps the defaults, **Custom** takes a typed value, and "Don't 
 |---|---|
 | **Ctrl+O** | Open a file (Windows file dialog) |
 | **Ctrl+V** | Play the link or file path on the clipboard |
-| **F** | Frame-rate quick menu (same tiles, plus custom and the interpolation toggle) |
+| **f** | Frame-rate quick menu (same tiles, plus custom and the interpolation toggle) |
 | **Ctrl+,** | Settings: ask/don't ask, defaults, anime mode, headroom, audio offset, engines per resolution, system check |
-| **D** | Debug overlay |
+| **d** | Debug overlay |
+| **F11** or double-click | Fullscreen |
 | **Shift+I** | mpv's own stats page |
 
 The bottom bar has a quality pill (opens the sheet again), the frame-rate button with the current target, subtitles,
