@@ -45,7 +45,7 @@ function M.render(st)
     }
     local low_clock = st.gpu_mhz and st.gpu_max_mhz and st.gpu_mhz < st.gpu_max_mhz * 0.5
     local vrr = st.display_fps and st.measured_display_fps and math.abs(st.display_fps - st.measured_display_fps) > 2
-    local h = 12 + 16 + 10 + #rows * 15 + 10 + #GRAPHS * (GH + 18) + 6
+    local h = 12 + 16 + 10 + #rows * 18 + 10 + #GRAPHS * (GH + 20) + 6
     c:rect(x0, y0, PW, h, 12, C.black, 0x58, C.white, 1)
     c:text(x0 + 14, y0 + 18, 4, 10, C.muted, "DEBUG", { bold = true })
     c:text(x0 + PW - 14, y0 + 18, 6, 10, C.faint, "D to hide")
@@ -54,21 +54,21 @@ function M.render(st)
         local tone = C.text
         if r[1] == "gpu" and low_clock then tone = C.warn end
         if r[1] == "display" then tone = vrr and C.warn or C.good end
-        c:text(x0 + 14, y + 7, 4, 11, C.muted, r[1], { font = ui.MONO })
-        c:text(x0 + 110, y + 7, 4, 11, tone, r[2], { font = ui.MONO })
-        y = y + 15
+        c:text(x0 + 14, y + 8, 4, 12, C.muted, r[1])
+        c:text(x0 + 110, y + 8, 4, 12, tone, r[2], { font = ui.MONO })
+        y = y + 18
     end
-    if low_clock then c:text(x0 + 110, y + 4, 4, 10, C.warn, "GPU parked in power saving, see README"); y = y + 14 end
-    if vrr then c:text(x0 + 110, y + 4, 4, 10, C.warn, "variable refresh: turn off G-SYNC / Dynamic rate"); y = y + 14 end
+    if low_clock then c:text(x0 + 110, y + 5, 4, 11, C.warn, "GPU parked in power saving, see README"); y = y + 16 end
+    if vrr then c:text(x0 + 110, y + 5, 4, 11, C.warn, "variable refresh: turn off G-SYNC / Dynamic rate"); y = y + 16 end
     y = y + 10
     for _, g in ipairs(GRAPHS) do
         local samples = (st.hist or {})[g.key] or {}
         local vmax = g.key == "real_fps" and (st.target_fps or 60) * 1.2 or maxof(samples, 1) * 1.1
-        c:text(x0 + 14, y + 5, 4, 10, C.muted, g.label .. " (max " .. ui.num(maxof(samples, 0)) .. ")")
-        c:rect(x0 + 14, y + 13, PW - 28, GH, 4, C.white, 0xF0)
-        local path = M.graph(samples, x0 + 14, y + 13, PW - 28, GH, vmax)
+        c:text(x0 + 14, y + 6, 4, 11, C.muted, g.label .. " (max " .. ui.num(maxof(samples, 0)) .. ")")
+        c:rect(x0 + 14, y + 15, PW - 28, GH, 4, C.white, 0xF0)
+        local path = M.graph(samples, x0 + 14, y + 15, PW - 28, GH, vmax)
         if path ~= "" then c:shape(path, g.color, 0x50) end
-        y = y + GH + 18
+        y = y + GH + 20
     end
     return c:render()
 end

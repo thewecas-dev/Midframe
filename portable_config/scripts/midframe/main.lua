@@ -163,7 +163,7 @@ local function sync_ui()
     })
     local w, h = video_size()
     set_button("midframe_quality", {
-        icon = "high_quality", badge = h and tostring(h) or nil, tooltip = h and (h .. "p · quality and frame rate") or "Quality and frame rate",
+        icon = "high_quality", tooltip = h and (h .. "p · quality and frame rate") or "Quality and frame rate",
         command = "script-binding midframe/setup",
     })
     set_button("midframe_debug", { icon = "show_chart", active = S.debug, tooltip = "Debug overlay (D)", command = "script-binding midframe/debug" })
@@ -184,7 +184,7 @@ local function sync_ui()
     mp.set_property_native("user-data/midframe/status", status)
 end
 
-local apply, draw_home, retarget, modal_redraw
+local apply, draw_home, retarget, modal_redraw, draw_debug
 
 -- Engine builds run one at a time in a subprocess (minutes each); playback stays plain meanwhile.
 local function start_build(job)
@@ -502,6 +502,7 @@ local function modal_close()
     Modal.ov:remove()
     modal_unbind()
     if kind ~= "home" then draw_home() end  -- the home screen may be underneath
+    if S.debug and draw_debug then draw_debug() end
 end
 modal_redraw = function()
     if not Modal.kind then return end
@@ -884,6 +885,7 @@ end)
 local ov = mp.create_osd_overlay("ass-events")
 local ov_timer, vram_timer
 local function draw()
+    if Modal.kind and Modal.kind ~= "home" then ov:remove(); return end  -- never under a sheet, menu or drawer
     local W, H = design_size()
     ov.res_x, ov.res_y = W, H
     local w, h = video_size()
@@ -916,6 +918,7 @@ local function poll_vram()
         if S.vram_mb then push(S.hist.vram, S.vram_mb) end
     end)
 end
+draw_debug = draw
 mp.add_key_binding("D", "debug", function()
     S.debug = not S.debug
     if S.debug then
