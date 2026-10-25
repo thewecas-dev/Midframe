@@ -10,7 +10,7 @@ eq(overlay.graph({ 0, 99 }, 0, 0, 100, 50, 10), "m 0 50 l 0 50 l 100 0 l 100 50"
 eq(overlay.graph({ 0, 5 }, 0, 0, 100, 50, 0), "m 0 50 l 0 50 l 100 50 l 100 50", "vmax 0 safe")
 
 local out = overlay.render({
-    src_res = "1920×1080", src_fps = 24000 / 1001, target_fps = 60, real_fps = 59.8, display_fps = 144,
+    src_res = "1920×1080", src_fps = 24000 / 1001, target_fps = 48, real_fps = 47.8, display_fps = 144,
     measured_display_fps = 48.8, res_w = 1440, res_h = 900,
     level_label = "RIFE 4.26", backend = "TensorRT", auto_level = 1, auto_total = 7,
     drops = 0, delayed = 0, vram_mb = 2310, seek_ms = 420, gpu_mhz = 600, gpu_max_mhz = 3105, gpu_pstate = "P5",
@@ -18,7 +18,8 @@ local out = overlay.render({
 })
 assert(out:find("600 / 3105 MHz · P5 · 2310 MB", 1, true), out)
 assert(out:find("GPU parked in power saving", 1, true), "low clock warning")
-assert(out:find("60.000 · real 59.8", 1, true), out)
+assert(out:find("48.000 · real 47.8", 1, true), out)
+assert(not overlay.render({ display_fps = 144, measured_display_fps = 76.7, target_fps = 72, hist = { real_fps = {}, drops = {}, vram = {} } }):find("variable refresh", 1, true), "a struggling GPU is not blamed on the display")
 assert(out:find("144 Hz · measured 48.8", 1, true), out)
 assert(out:find("variable refresh", 1, true), "VRR warning")
 assert(out:find("1/7 · RIFE 4.26 · TensorRT", 1, true), out)

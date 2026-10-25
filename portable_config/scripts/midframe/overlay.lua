@@ -44,7 +44,9 @@ function M.render(st)
         { "display", string.format("%s Hz · measured %s", q(st.display_fps, "%.0f"), q(st.measured_display_fps, "%.1f")) },
     }
     local low_clock = st.gpu_mhz and st.gpu_max_mhz and st.gpu_mhz < st.gpu_max_mhz * 0.5
-    local vrr = st.display_fps and st.measured_display_fps and math.abs(st.display_fps - st.measured_display_fps) > 2
+    local out = st.target_fps or st.src_fps
+    local off = st.display_fps and st.measured_display_fps and math.abs(st.display_fps - st.measured_display_fps) > 2
+    local vrr = off and out and math.abs(st.measured_display_fps - out) < 1.5  -- locked to the video = variable refresh
     local h = 12 + 16 + 10 + #rows * 18 + 10 + #GRAPHS * (GH + 20) + 6
     c:rect(x0, y0, PW, h, 12, C.black, 0x58, C.white, 1)
     c:text(x0 + 14, y0 + 18, 4, 10, C.muted, "DEBUG", { bold = true })
@@ -53,7 +55,7 @@ function M.render(st)
     for _, r in ipairs(rows) do
         local tone = C.text
         if r[1] == "gpu" and low_clock then tone = C.warn end
-        if r[1] == "display" then tone = vrr and C.warn or C.good end
+        if r[1] == "display" then tone = vrr and C.warn or (off and C.muted or C.good) end
         c:text(x0 + 14, y + 8, 4, 12, C.muted, r[1])
         c:text(x0 + 110, y + 8, 4, 12, tone, r[2], { font = ui.MONO })
         y = y + 18

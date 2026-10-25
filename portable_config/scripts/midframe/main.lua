@@ -383,16 +383,25 @@ mp.add_periodic_timer(1, function()
     S.real_fps = vf_fps and math.max(0, vf_fps - dps)
     push(S.hist.real_fps, S.real_fps or 0)
     push(S.hist.drops, dps)
-    -- refresh-rate check: the measured vsync rate should sit on the nominal one once playback has settled
+    -- Refresh-rate check. Only a clean stretch of playback (no drops for 5 s) is evidence:
+    --   measured ~ nominal            -> fixed refresh, fine
+    --   measured ~ the video's output -> the panel follows the content: G-SYNC / Dynamic refresh is on
+    --   anything else                 -> GPU was struggling, not a display problem; say nothing
     if mp.get_property("path") and not mp.get_property_bool("pause") then
         playing_since = playing_since or mp.get_time()
+        S.clean_ticks = dps == 0 and (S.clean_ticks or 0) + 1 or 0
         local nominal, measured = mp.get_property_number("display-fps"), mp.get_property_number("estimated-display-fps")
-        if nominal and measured and measured > 1 and mp.get_time() - playing_since > 8 then
-            S.checks.refresh = math.abs(nominal - measured) < 2
-            S.checks.refresh_detail = string.format("%.0f Hz nominal, %.1f measured", nominal, measured)
+        local out_fps = target() or (S.src_num and S.src_num / S.src_den)
+        if nominal and measured and measured > 1 and mp.get_time() - playing_since > 8 and S.clean_ticks >= 5 then
+            local detail = string.format("%.0f Hz nominal, %.1f measured", nominal, measured)
+            if math.abs(nominal - measured) < 2 then
+                S.checks.refresh, S.checks.refresh_detail = true, detail
+            elseif out_fps and math.abs(measured - out_fps) < 1.5 and out_fps < nominal - 2 then
+                S.checks.refresh, S.checks.refresh_detail = false, detail .. " (locked to the video's " .. fps.fmt(out_fps) .. " fps)"
+            end
         end
     else
-        playing_since = nil
+        playing_since, S.clean_ticks = nil, 0
     end
 
     local t = target()
@@ -713,8 +722,8 @@ local function checks_model()
         { label = "mpv.exe set to High performance GPU", ok = S.checks.gpu_pref,
           hint = tri(S.checks.gpu_pref, "", "Settings → System → Display → Graphics → add mpv.exe → High performance", "Could not read the Windows graphics preference") },
         { label = "Fixed refresh rate, G-SYNC off", ok = S.checks.refresh,
-          hint = tri(S.checks.refresh, S.checks.refresh_detail or "", (S.checks.refresh_detail or "") .. " · variable refresh: turn off G-SYNC and the Dynamic refresh rate",
-              "Measured while a video plays") },
+          hint = tri(S.checks.refresh, S.checks.refresh_detail or "", (S.checks.refresh_detail or "") .. " · panel follows the video: turn off G-SYNC / Dynamic refresh",
+              "Measured during a few seconds of drop-free playback") },
         { label = "RIFE engines for 1080p", ok = ref_ready(), hint = ref_ready() and "" or "Built on first launch; see the Engines tab" },
         { label = S.gpu_name and ("GPU: " .. S.gpu_name) or "NVIDIA driver", ok = S.gpu_name ~= nil and true or nil,
           hint = S.driver and ("driver " .. S.driver) or "nvidia-smi did not answer" },
